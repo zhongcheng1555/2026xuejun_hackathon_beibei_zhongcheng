@@ -1,0 +1,897 @@
+:root {
+  --warm: #ffb454;
+  --warm-deep: #e8763a;
+  --ally: #5ad2ff;
+  --enemy: #ff6a56;
+  --panel: rgba(14, 17, 22, 0.86);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0f14;
+  color: #e9eef5;
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  user-select: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- HUD ---------- */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.top-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(to bottom, rgba(6, 9, 13, 0.75), rgba(6, 9, 13, 0));
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 86px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(12, 16, 22, 0.66);
+  border: 1px solid rgba(255, 180, 84, 0.18);
+  border-top: 2px solid rgba(255, 180, 84, 0.5);
+}
+
+.stat .label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #93a1b3;
+}
+
+.stat .value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.stat.ally .value {
+  color: var(--ally);
+}
+
+.stat.enemy .value {
+  color: var(--enemy);
+}
+
+.stat.warn .value {
+  color: var(--warm);
+}
+
+/* 战报 */
+#feed {
+  position: absolute;
+  top: 92px;
+  right: 18px;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.feed-item {
+  padding: 5px 11px;
+  border-radius: 6px;
+  background: rgba(12, 16, 22, 0.72);
+  border-right: 3px solid rgba(255, 180, 84, 0.65);
+  font-size: 13px;
+  transition: opacity 0.6s ease;
+  white-space: nowrap;
+}
+
+.feed-item.fade {
+  opacity: 0;
+}
+
+.feed-item.kill {
+  border-right-color: #5ad2ff;
+  color: #bfeaff;
+}
+
+.feed-item.friendly {
+  border-right-color: var(--warm-deep);
+  color: #ffc38a;
+}
+
+.feed-item.danger {
+  border-right-color: #ff4a3d;
+  color: #ffb3aa;
+}
+
+.feed-item.air {
+  border-right-color: #ffe08a;
+  color: #ffe9b0;
+}
+
+/* 情报（侦察兵报告）和警告要一眼看见：更大、全边框、能换行、加投影 */
+.feed-item.air,
+.feed-item.danger {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  padding: 8px 14px;
+  max-width: 330px;
+  white-space: normal;
+  text-align: right;
+  border: 1px solid rgba(255, 224, 138, 0.45);
+  border-right: 4px solid #ffe08a;
+  background: linear-gradient(90deg, rgba(12, 16, 22, 0.6), rgba(12, 16, 22, 0.92));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  animation: feed-in 0.28s ease-out;
+}
+
+.feed-item.danger {
+  border-color: rgba(255, 74, 61, 0.5);
+  border-right-color: #ff4a3d;
+  color: #ffd2cc;
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 横幅 */
+#banner {
+  position: absolute;
+  top: 25%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+#banner.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#banner-title {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: #fff;
+  text-shadow: 0 0 22px rgba(255, 180, 84, 0.75), 0 3px 10px rgba(0, 0, 0, 0.8);
+}
+
+#banner-sub {
+  margin-top: 6px;
+  font-size: 15px;
+  color: #ffd9a0;
+  letter-spacing: 2px;
+}
+
+/* 准星 */
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  transition: width 0.1s ease, height 0.1s ease;
+}
+
+#crosshair.kick {
+  width: 44px;
+  height: 44px;
+}
+
+#crosshair .dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+}
+
+#crosshair .line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+}
+
+#crosshair .line.t,
+#crosshair .line.b {
+  left: 50%;
+  width: 2px;
+  height: 9px;
+  margin-left: -1px;
+}
+
+#crosshair .line.t {
+  top: 0;
+}
+
+#crosshair .line.b {
+  bottom: 0;
+}
+
+#crosshair .line.l,
+#crosshair .line.r {
+  top: 50%;
+  height: 2px;
+  width: 9px;
+  margin-top: -1px;
+}
+
+#crosshair .line.l {
+  left: 0;
+}
+
+#crosshair .line.r {
+  right: 0;
+}
+
+/* 命中提示 */
+#hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  opacity: 0;
+}
+
+#hitmarker::before,
+#hitmarker::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 3px;
+  margin: -1.5px 0 0 -9px;
+  background: #fff;
+}
+
+#hitmarker::before {
+  transform: rotate(45deg);
+}
+
+#hitmarker::after {
+  transform: rotate(-45deg);
+}
+
+#hitmarker.show {
+  opacity: 1;
+}
+
+#hitmarker.kill::before,
+#hitmarker.kill::after {
+  background: #ff5a4a;
+  height: 4px;
+  width: 24px;
+  margin: -2px 0 0 -12px;
+}
+
+#hitmarker.friendly::before,
+#hitmarker.friendly::after {
+  background: var(--warm);
+}
+
+#hitmarker.plane::before,
+#hitmarker.plane::after {
+  background: #ffe08a;
+}
+
+/* 侦察兵：青色小叉 */
+#hitmarker.scout::before,
+#hitmarker.scout::after {
+  background: #7fe4ff;
+  height: 2px;
+  width: 14px;
+}
+
+/* 受伤暗角 */
+#damage-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(circle at center, rgba(255, 0, 0, 0) 35%, rgba(190, 20, 20, 0.85) 100%);
+  transition: opacity 0.18s ease-out;
+}
+
+/* 底部：血量与装填 */
+.bottom-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.bar {
+  position: relative;
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(10, 13, 18, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.bar.small {
+  height: 9px;
+}
+
+.bar .fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  background: #4ad07a;
+  transition: width 0.12s linear, background 0.25s linear;
+}
+
+.bar .caption {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.bar .value {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.bar.small .fill {
+  background: rgba(255, 180, 84, 0.65);
+  width: 0;
+}
+
+.bar.small .fill.ready {
+  background: var(--warm);
+}
+
+/* 弹夹条：要放得下文字，比普通小条高一点 */
+.bar.ammo {
+  height: 18px;
+}
+
+.bar.ammo .caption {
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* 血条上的修复上限刻度：线右边是永久损失的血 */
+.bar .cap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.9);
+  z-index: 2;
+}
+
+#repair-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 82px;
+  transform: translateX(-50%);
+  padding: 6px 15px;
+  border-radius: 999px;
+  background: rgba(10, 13, 18, 0.82);
+  border: 1px solid rgba(255, 180, 84, 0.45);
+  color: #ffd9a0;
+  font-size: 13px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+#repair-hint.repairing {
+  border-color: rgba(122, 224, 168, 0.65);
+  color: #baf6d3;
+}
+
+/* 移动 / 瞄准模式切换 */
+#mode-widget {
+  position: absolute;
+  right: 18px;
+  bottom: 26px;
+  pointer-events: auto;
+}
+
+.mode-btn {
+  width: auto;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 180, 84, 0.5);
+  background: rgba(18, 22, 28, 0.85);
+  color: #ffd9a0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.mode-btn:hover {
+  filter: brightness(1.15);
+}
+
+.mode-btn:active {
+  transform: scale(0.97);
+}
+
+.mode-btn.aim {
+  background: linear-gradient(180deg, #ffb454, #e8763a);
+  color: #1b1206;
+  border-color: #ffcf8a;
+  box-shadow: 0 0 18px rgba(255, 180, 84, 0.45);
+}
+
+/* 瞄准模式下准星变色收紧 */
+#crosshair.aim .line,
+#crosshair.aim .dot {
+  background: var(--warm);
+  box-shadow: 0 0 6px rgba(255, 180, 84, 0.9);
+}
+
+#spectate-hint {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: rgba(10, 13, 18, 0.8);
+  border: 1px solid rgba(255, 180, 84, 0.4);
+  color: #ffd9a0;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+/* ---------- 覆盖层 ---------- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 封面图打底，上面压一层暗色渐变：中间透得出画面，四周压暗让面板和文字依然清楚。
+     url 是相对本样式表算的，所以从 src/ 往上一级取 cover.jpg */
+  background:
+    radial-gradient(circle at 50% 40%, rgba(10, 9, 12, 0.58), rgba(5, 7, 10, 0.9)),
+    url('../cover.jpg') center / cover no-repeat,
+    #06080b;
+  backdrop-filter: blur(3px);
+}
+
+/* 结算黑屏：盖满整个界面，并且把点击一起吃掉（不能用 pointer-events: none）。
+   目的是给玩家一秒缓冲 —— 这时候人往往还在按开火，手指会正好落在刚出现的
+   「再来一局」上，一松手就把新一局点开了 */
+#blackout {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: #000;
+}
+
+/* 进场页：整屏封面**原色**（不压暗），正上方红色标题、底下居中一个大按钮。
+   它盖在菜单上面，点一下就撤掉，音乐从点的那一下开始放 */
+#enter-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: url('../cover.jpg') center / cover no-repeat, #06080b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16vh 0 4.5vh;
+}
+
+#enter-title {
+  margin: 0;
+  font-size: clamp(30px, 5.2vw, 58px);
+  font-weight: 800;
+  letter-spacing: 12px;
+  text-indent: 12px;
+  color: #ff4030;
+  /* 深色描边 + 光晕：让红字从封面图上"立"起来，不至于糊进去 */
+  text-shadow:
+    0 2px 0 #7a0f06,
+    0 0 24px rgba(255, 64, 48, 0.55),
+    0 8px 28px rgba(0, 0, 0, 0.8);
+}
+
+/* 胶囊形：中间是长方形，左右两端的圆角被钳到半个高度 → 正好是两个半圆。
+   （50% 会变成椭圆 —— 椭圆是四周都鼓出去的，不是这个形状） */
+#enter-btn {
+  --w: 300px;
+  --h: 112px;
+  width: var(--w);
+  height: var(--h);
+  padding: 0;
+  line-height: var(--h);
+  /* 999px：左右两端的圆角被钳到半个高度（56px），出来正好是两个半圆。
+     这里不能引用没定义过的变量 —— 写错的话整条 border-radius 会被丢掉，
+     按钮就悄悄变回 9px 的小圆角（之前那个"不是圆形"的毛病就是这么来的） */
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 28%, #63c0ff, #1f6fe0 74%);
+  color: #f4faff;
+  font-size: 30px;
+  letter-spacing: 6px;
+  text-indent: 6px;      /* letter-spacing 会在最后一个字后面也留白，补回来 */
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.62), inset 0 -3px 0 rgba(0, 0, 0, 0.2);
+}
+
+#enter-btn:hover {
+  filter: brightness(1.08);
+}
+
+#enter-btn:active {
+  transform: translateY(2px);
+}
+
+/* 纯空战的测试开关：贴在菜单右下角。z-index 压在结算黑屏(10)和进场页(20)下面，
+   所以开打前那一下黑屏、以及"进军！"那一页都会把它盖住 */
+#test-toggles {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px 9px;
+  border-radius: 10px;
+  background: rgba(12, 14, 19, 0.72);
+  border: 1px solid rgba(255, 180, 84, 0.22);
+  font-size: 13px;
+  color: #b9b2a6;
+  user-select: none;
+}
+
+/* 开发开关默认收起来。必须专门写这一条：#test-toggles 里的 display:flex
+   是 ID 选择器，权重比通用的 .hidden 高，光加 class 是藏不住的 */
+#test-toggles.hidden {
+  display: none;
+}
+
+#test-toggles .tt-title {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: rgba(255, 180, 84, 0.65);
+}
+
+#test-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+#test-toggles label:hover {
+  color: #e6ddcd;
+}
+
+#test-toggles input {
+  accent-color: var(--warm);
+  cursor: pointer;
+}
+
+.panel {
+  width: min(560px, 92vw);
+  padding: 30px 34px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 180, 84, 0.28);
+  border-top: 3px solid var(--warm);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), inset 0 0 60px rgba(255, 180, 84, 0.05);
+}
+
+.panel h1 {
+  margin: 0 0 4px;
+  font-size: 30px;
+  letter-spacing: 4px;
+  color: #fff;
+}
+
+.panel h1 .accent {
+  color: var(--warm);
+}
+
+.panel .sub {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #8c9aab;
+  letter-spacing: 1px;
+}
+
+.panel .keys {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 9px 16px;
+  margin: 0 0 22px;
+}
+
+.panel .keys div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: #cfd8e3;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 26px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #1d232c;
+  border: 1px solid rgba(255, 180, 84, 0.35);
+  border-bottom-width: 2px;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: center;
+  color: #ffd9a0;
+}
+
+.panel .tips {
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(255, 180, 84, 0.07);
+  border-left: 3px solid var(--warm-deep);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: #c3b39c;
+}
+
+button {
+  width: 100%;
+  padding: 13px;
+  border: none;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #ffb454, #e8763a);
+  color: #1b1206;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button:active {
+  transform: scale(0.985);
+}
+
+#over-title {
+  margin-bottom: 18px;
+}
+
+#over-title.win {
+  color: #7ef0a8;
+}
+
+#over-title.lose {
+  color: #ff7a6a;
+}
+
+/* 平局：两边同一刻打光，谁也不给绿也不给红，用中性的暖金 */
+#over-title.draw {
+  color: #e2c67f;
+}
+
+#over-stats {
+  list-style: none;
+  margin: 0 0 22px;
+  padding: 0;
+}
+
+#over-stats li {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 2px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.09);
+  font-size: 14px;
+  color: #b6c1ce;
+}
+
+#over-stats li b {
+  color: #fff;
+  font-size: 15px;
+}
+
+#over-stats li b.warn {
+  color: var(--warm);
+}
+
+/* ---------- 菜单按钮 / 规则面板 ---------- */
+
+.menu-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 开局选修：坦克 / 飞机 */
+.side-pick {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 6px;
+}
+
+.side-pick .pick {
+  flex: 1 1 0;
+  padding: 11px 8px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #cfd8e2;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.side-pick .pick.active {
+  background: linear-gradient(180deg, #ffb454, #e8763a);
+  border-color: transparent;
+  color: #1b1206;
+}
+
+.side-pick .pick:hover {
+  filter: brightness(1.08);
+}
+
+.pick-desc {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #a99a86;
+  min-height: 34px;
+}
+
+/* 开飞机时的高度读数 */
+.plane-alt {
+  align-self: center;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.menu-actions button {
+  width: auto;
+  flex: 1 1 150px;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid rgba(255, 180, 84, 0.5);
+  color: var(--warm);
+  letter-spacing: 2px;
+  font-weight: 600;
+}
+
+button.ghost:hover {
+  background: rgba(255, 180, 84, 0.14);
+  filter: none;
+}
+
+button.ghost.small {
+  flex: 0 0 auto;
+  padding: 7px 18px;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+#rules-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 6, 10, 0.86);
+  backdrop-filter: blur(4px);
+  z-index: 30;
+}
+
+/* 规则面板：标题固定，内容自己滚 */
+.rules-panel {
+  width: min(700px, 92vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 26px 22px;
+}
+
+.rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.rules-head h2 {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: 3px;
+  color: var(--warm);
+}
+
+.rules-body {
+  overflow-y: auto;
+  padding-right: 12px;
+}
+
+.rules-body .keys {
+  margin-bottom: 16px;
+}
+
+.rules-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rules-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 180, 84, 0.35);
+  border-radius: 4px;
+}
