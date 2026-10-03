@@ -68,6 +68,7 @@ export class Terrain {
 
     // 隧道（山谷用）：通道上面盖一层岩顶。空的时候所有查询都是白跑，别的图不受影响
     this.tunnels = [];
+    this.waterPlants = { lilies: 0, reeds: 0, weeds: 0 };   // 水生植物数量（没有海的图恒为 0）
     this.roofTop = 0;
     this.roofBot = 0;
 
@@ -106,6 +107,7 @@ export class Terrain {
     this._buildCrater();      // 火山口里那池岩浆（只有火山图有）
     this._buildStreamSurface();
     this._buildLakeSurface(); // 大湖的水面（只有带 lake 配置的图有）
+    this._buildWaterPlants(); // 水里的荷叶/芦苇/海草（同上）
     // 城市废墟走"街区"布局，花园迷宫走"挖通道"布局，其他地形是随机撒掩体
     if (biome.maze) this._buildMaze();
     else if (biome.city) this._buildCity();
@@ -195,12 +197,89 @@ export class Terrain {
         roughness: 0.12,     // 又滑又亮 —— 一眼就认得出是水
         metalness: 0.15,
         transparent: true,
-        opacity: 0.86,
+        opacity: 0.78,       // 留一点透，能看见水下的海草
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'lake';
       mesh.renderOrder = 1;
       this.group.add(mesh);
+    }
+  }
+
+  // 水生植物：荷叶浮在水面、芦苇从浅水边长出来、海草长在水下。
+  // 全部是**装饰**，不登记碰撞体 —— 不挡子弹也不挡车，纯粹让海看起来是活的。
+  // 必须等水位定好（_buildLakeSurface）之后才能摆，所以放它后面调
+  _buildWaterPlants() {
+    if (!this.lakes.length) return;
+    const parts = this.biome.parts || {};
+    const lilies = [];
+    const reeds = [];
+    const weeds = [];
+    for (const L of this.lakes) {
+      // 荷叶：湖里随机撒，一小片片贴着水面
+      const nLily = Math.round((L.rx * L.rz) / 1100);
+      for (let i = 0; i < nLily; i++) {
+        const a = rand(0, Math.PI * 2);
+        const r = Math.sqrt(Math.random()) * 0.92;
+        lilies.push({
+          x: L.x + Math.cos(a) * L.rx * r,
+          z: L.z + Math.sin(a) * L.rz * r,
+          y: L.level + 0.06, ry: rand(0, Math.PI * 2),
+          s: rand(1.5, 3.2), tint: rand(0.85, 1.12),
+        });
+      }
+      // 芦苇丛：贴着浅水边（归一化 0.86~1.0），露出水面一大截
+      const nReed = Math.round((L.rx + L.rz) / 11);
+      for (let i = 0; i < nReed; i++) {
+        const a = rand(0, Math.PI * 2);
+        const k = rand(0.86, 1.0);
+        reeds.push({
+          x: L.x + Math.cos(a) * L.rx * k,
+          z: L.z + Math.sin(a) * L.rz * k,
+          y: L.level - 0.5, ry: rand(0, Math.PI * 2),
+          s: rand(0.7, 1.5), tint: rand(0.85, 1.15),
+        });
+      }
+      // 海草：长在湖底，从水下冒上来（水面留了透明度，能看见一片片黑影）
+      const nWeed = Math.round((L.rx * L.rz) / 3000);
+      for (let i = 0; i < nWeed; i++) {
+        const a = rand(0, Math.PI * 2);
+        const r = Math.sqrt(Math.random()) * 0.88;
+        const x = L.x + Math.cos(a) * L.rx * r;
+        const z = L.z + Math.sin(a) * L.rz * r;
+        weeds.push({
+          x, z, y: this.heightAt(x, z) + 0.3, ry: rand(0, Math.PI * 2),
+          s: rand(0.8, 1.6), tint: rand(0.8, 1.1),
+        });
+      }
+    }
+
+    const leaf = parts.leaf || 0x3f6f2c;
+    // 记个数：测试和调试要用（也能一眼看出这张图到底摆了没有）
+    this.waterPlants = { lilies: lilies.length, reeds: reeds.length, weeds: weeds.length };
+    if (lilies.length) {
+      const geo = new THREE.CircleGeometry(1, 9);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({
+        color: parts.lily || leaf, roughness: 0.85, side: THREE.DoubleSide,
+      });
+      this._instanced(geo, mat, lilies, (s, o) => s.set(o.s, 1, o.s), false);
+    }
+    if (reeds.length) {
+      const geo = new THREE.CylinderGeometry(0.09, 0.16, 7, 4);
+      geo.translate(0, 3.5, 0);            // 底边落在物体位置上
+      const mat = new THREE.MeshStandardMaterial({
+        color: parts.reed || leaf, roughness: 1, flatShading: true,
+      });
+      this._instanced(geo, mat, reeds, (s, o) => s.set(o.s * 0.9, o.s, o.s * 0.9), true);
+    }
+    if (weeds.length) {
+      const geo = new THREE.ConeGeometry(0.55, 11, 5);
+      geo.translate(0, 5.5, 0);
+      const mat = new THREE.MeshStandardMaterial({
+        color: parts.weed || 0x2f6b4a, roughness: 1, flatShading: true,
+      });
+      this._instanced(geo, mat, weeds, (s, o) => s.set(o.s, o.s, o.s), false);
     }
   }
 
@@ -597,6 +676,17 @@ export class Terrain {
 
   // ---------- 掩体 ----------
 
+  // 这里离水太近吗（避免把树种到海里 / 河边）。margin 传障碍物自己的半径，
+  // 免得一棵树"站在水里、树冠露出水面"
+  tooCloseToWater(x, z, margin = 0) {
+    if (this.stream && this.streamDistance(x, z) < this.stream.width * 1.05 + margin) return true;
+    for (const L of this.lakes) {
+      const k = Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz);
+      if (k < 1 + margin / Math.min(L.rx, L.rz)) return true;
+    }
+    return false;
+  }
+
   _scatterObstacles() {
     const b = this.biome;
     const parts = b.parts;
@@ -610,7 +700,7 @@ export class Terrain {
         const x = rand(-this.playable * 1.02, this.playable * 1.02);
         const z = rand(-this.playable * 1.02, this.playable * 1.02);
         if (this.slopeAt(x, z) > 0.42) continue;
-        if (this.stream && this.streamDistance(x, z) < this.stream.width * 1.05) continue; // 水里不放东西
+        if (this.tooCloseToWater(x, z, r)) continue;   // 河边 / 海里都不放东西
         let ok = true;
         for (const c of this.colliders) {
           const dx = c.x - x;
@@ -1212,9 +1302,44 @@ export class Terrain {
         }
       }
     }
+    this._pushOutOfWater(pos, radius, out);
     const limit = this.playable;
     pos.x = clamp(pos.x, -limit, limit);
     pos.z = clamp(pos.z, -limit, limit);
+  }
+
+  // 深水（海 / 大湖）是硬障碍：坦克、侦察兵开不进去，会被推回岸上。
+  // 注意**小溪不算** —— 那是能趟的浅水。要是把河也变成墙，森林/草原/雪原那几张图
+  // 中间就横着一堵过不去的墙，而 AI 的寻路完全没为"绕河"做过准备。
+  // 海域才是用来"把战场切开"的那种隔离
+  _pushOutOfWater(pos, radius, out) {
+    if (!this.lakes.length) return;
+    // 两遍：两个湖挨着的时候，被 A 推出去可能正好推进 B 里
+    for (let pass = 0; pass < 2; pass++) {
+      let moved = false;
+      for (const L of this.lakes) {
+        // 归一化椭圆距离：湖心 0、岸边 1
+        let ux = (pos.x - L.x) / L.rx;
+        let uz = (pos.z - L.z) / L.rz;
+        const len = Math.hypot(ux, uz);
+        if (len >= 1) continue;                       // 已经在岸上了
+        if (len < 1e-4) { ux = 1; uz = 0; } else { ux /= len; uz /= len; }
+        // 沿"湖心 → 单位方向"推到岸边外面，并留出车体半径
+        // （归一化空间里 1 个单位 ≈ 半个湖，所以半径要按最小半轴换算）
+        const margin = 1 + radius / Math.min(L.rx, L.rz);
+        const bx = pos.x;
+        const bz = pos.z;
+        pos.x = L.x + ux * L.rx * margin;
+        pos.z = L.z + uz * L.rz * margin;
+        if (out) {
+          out.x += pos.x - bx;
+          out.z += pos.z - bz;
+          out.hit = true;
+        }
+        moved = true;
+      }
+      if (!moved) break;
+    }
   }
 
   // 这一点是不是在隧道的岩顶里（头顶那层石头）。

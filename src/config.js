@@ -576,23 +576,27 @@ export const BIOMES = [
   },
   {
     id: 'sea',
-    name: '大湖',
-    size: 620,
+    name: '海',
+    size: 780,
     heightScale: 11,
-    noiseScale: 0.0044,
+    noiseScale: 0.004,
     ridge: 2.0,
-    trees: 90, rocks: 40, bushes: 120, sandbags: 60,
+    trees: 110, rocks: 45, bushes: 130, sandbags: 60,
     ground: { base: 0x6f8a52, second: 0x8aa066, rock: 0x7f7a6e, high: 0x9aa08c },
-    parts: { leaf: 0x3f6f2c, trunk: 0x55402a, rock: 0x837a70, bush: 0x4d7a34, sandbag: 0x8a7c58 },
+    parts: { leaf: 0x3f6f2c, trunk: 0x55402a, rock: 0x837a70, bush: 0x4d7a34, sandbag: 0x8a7c58,
+      // 水生植物：荷叶 / 芦苇 / 海草
+      lily: 0x4f8f3c, reed: 0x7f9a4a, weed: 0x2f6b4a },
     sky: { top: 0x2f74b4, bottom: 0xdceaf2 },
-    fog: { color: 0xcfe0e8, near: 280, far: 1050 },
+    fog: { color: 0xcfe0e8, near: 300, far: 1150 },
     light: { sun: 0xfff2dc, sunIntensity: 1.6, hemi: 0.82, ambient: 0.4 },
-    stream: { chance: 0, width: 10, depth: 1.2 },   // 不铺河：有大湖就够了
-    // 大湖：地图正中一大片水，把战场切成"绕着湖打"的通道。
-    // 坦克是两栖的，能下水（很慢），所以不会出现"过不去"的死局
+    stream: { chance: 0, width: 10, depth: 1.2 },   // 不铺河：这片海本身就是主角
+    // 海：两片大椭圆交叠，把战场从中间横着切开 —— 左右各留一条 ~78m 的岸上通道，
+    // 坦克只能绕着走（深水是硬障碍，开不进去）。
+    // 这就是"水当隔离"：正面过不去，要么绕远，要么等海战载具
     lake: {
-      chance: 1, count: 1, rx: 0.24, rz: 0.30, depth: 8,
-      color: 0x2b6f9c, speedMul: 0.38,
+      chance: 1, count: 2, spots: [[-0.10, 0], [0.10, 0]],
+      rx: 0.24, rz: 0.21, depth: 9,
+      color: 0x24618f, speedMul: 0.38,
     },
   },
 ];
