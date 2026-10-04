@@ -213,7 +213,8 @@ export class Plane {
   // 没有隧道的图 roofTopAbs=0，就等于原来的"离地 18m"
   get diveFloor() {
     const t = this.world.terrain;
-    const gy = t.heightAt ? t.heightAt(this.pos.x, this.pos.z) : this.pos.y;
+    // 湖面上按水面算：不然 AI 会贴着湖底俯冲，一头扎进水里
+    const gy = t.heightAt ? this._surface(this.pos.x, this.pos.z) : this.pos.y;
     return Math.max(gy + CONFIG.plane.pullUpAlt, (t.roofTopAbs || 0) + CONFIG.plane.pullUpClear);
   }
 
@@ -626,6 +627,24 @@ export class Plane {
     this._orient(dt);
   }
 
+  // 飞机脚下的"地面"：水面上要算**水面**，不是水下十几米的盆底 ——
+  // 原来只看 heightAt，于是湖里判定的是湖底：飞机能从水面上穿过去、
+  // 或者一路沉到湖底才炸（玩家反馈"坠机坠不到水里"）
+  _surface(x, z) {
+    const t = this.world.terrain;
+    const g = t.heightAt(x, z);
+    const w = t.waterLevelAt ? t.waterLevelAt(x, z) : null;
+    return w !== null && w > g ? w : g;
+  }
+
+  // 趴着不动时停在哪一层：陆地上是地面上方 0.9m，水面上是半浮着（沉一点）
+  _restY(x, z) {
+    const t = this.world.terrain;
+    const g = t.heightAt(x, z);
+    const w = t.waterLevelAt ? t.waterLevelAt(x, z) : null;
+    return w !== null && w > g ? w - 0.45 : g + 0.9;
+  }
+
   // 飞机和地面的接触判定。老版本这里是"离地 18 米硬托底"（下限），
   // 现在下限去掉了：贴到地上就真的会发生撞击，分机翼和机身两种结果
   _groundContact() {
@@ -635,13 +654,17 @@ export class Plane {
       _tip.set(side === 'left' ? -6.5 : 6.5, -0.1, 0.4)
         .applyQuaternion(this.object.quaternion)
         .add(this.pos);
-      const g = t.heightAt(_tip.x, _tip.z);
+      const wl = t.waterLevelAt ? t.waterLevelAt(_tip.x, _tip.z) : null;
+      const gh = t.heightAt(_tip.x, _tip.z);
+      const onWater = wl !== null && wl > gh;
+      const g = onWater ? wl : gh;
       const blocked = t.hitCollider ? t.hitCollider(_tip.x, _tip.y, _tip.z) : null;
       const roof = t.roofAt ? t.roofAt(_tip.x, _tip.y, _tip.z) : false;
       if (blocked || roof) this.loseWing(side, 'obstacle');
-      else if (_tip.y < g + 0.2) this.loseWing(side, 'ground');
+      // 机翼削到水面 = 削到水（溅一排水花），不是削到地
+      else if (_tip.y < g + 0.2) this.loseWing(side, onWater ? 'water' : 'ground');
     }
-    const gy = t.heightAt(this.pos.x, this.pos.z);
+    const gy = this._surface(this.pos.x, this.pos.z);
     // 一头扎进隧道岩顶：和撞地一个下场（飞机想钻隧道就得自己担着）
     const inRoof = t.roofAt ? t.roofAt(this.pos.x, this.pos.y, this.pos.z) : false;
     if (!inRoof && this.pos.y >= gy + CONFIG.plane.bodyClear) return;
@@ -728,9 +751,10 @@ export class Plane {
     w.visible = false;
     this.wingLoss++;
     this.lossSide = side === 'left' ? -1 : 1;
-    // 断翼的那一片飞出去：原地炸一小团当碎片
+    // 断翼的那一片飞出去：原地炸一小团当碎片（削到水面就是溅一排水花）
     _tip.copy(this.pos).addScaledVector(_side.copy(_right).applyQuaternion(this.object.quaternion), this.lossSide * 6);
-    this.world.effects.explosion(_tip.clone(), 0.55);
+    if (cause === 'water') this.world.effects.splash(_tip.clone(), 0.8);
+    else this.world.effects.explosion(_tip.clone(), 0.55);
     if (this.world.onPlaneWingLost) this.world.onPlaneWingLost(this, side, cause);
     return true;
   }
@@ -776,7 +800,7 @@ export class Plane {
     // 注意：趴在地上烧的这架**不再对旁边的坦克造成持续伤害**。
     // 它没有目标、也不分敌我，纯粹靠"站在旁边"就一直在烧队友/敌人，
     // 玩家反馈这不合理，去掉了（砸中那一下的伤害见 wreckDamage，不受影响）
-    const gy = this.world.terrain.heightAt(this.landX, this.landZ) + 0.9;
+    const gy = this._restY(this.landX, this.landZ);   // 落在水里就半浮着，不是沉到湖底
     if (this.isPlayer) {
       this._playerSteer(dt);                 // 机头还能转（用视线方向），扳机还能开
       this.pos.set(this.landX, gy, this.landZ);
@@ -871,14 +895,22 @@ export class Plane {
       this.world.effects.wreckSmoke(this.pos);
     }
 
-    const ground = this.world.terrain.heightAt(this.pos.x, this.pos.z);
+    // 摔在哪一层：水面上就摔在水面上（溅水花），不是沉到湖底才炸
+    const ground = this._surface(this.pos.x, this.pos.z);
     if (this.pos.y <= ground) {
+      const inWater = this.world.terrain.isWater(this.pos.x, this.pos.z);
       this._crashPose(ground);                // 摆好坠毁姿态再停下来
       this.landed = true;
       this.fallVel.set(0, 0, 0);
       this.smokeTimer = 0;
-      this.world.effects.explosion(new THREE.Vector3(this.pos.x, ground + 1.5, this.pos.z), 1.4);
-      this.world.effects.crater(this.pos);
+      if (inWater) {
+        // 掉进水里：一大排水花 + 一团水汽，不抠土坑
+        this.world.effects.splash(new THREE.Vector3(this.pos.x, ground + 0.3, this.pos.z), 1.7);
+        this.world.effects.explosion(new THREE.Vector3(this.pos.x, ground + 0.8, this.pos.z), 0.7);
+      } else {
+        this.world.effects.explosion(new THREE.Vector3(this.pos.x, ground + 1.5, this.pos.z), 1.4);
+        this.world.effects.crater(this.pos);
+      }
     }
   }
 

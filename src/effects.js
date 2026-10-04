@@ -169,6 +169,28 @@ export class Effects {
     if (this.onImpact) this.onImpact(pos, onGround);
   }
 
+  // 落水：一圈白水花 + 一团水汽。落水和落地要分开 ——
+  // 水里炸出一团火、还抠个土坑就太出戏了
+  splash(pos, scale = 1) {
+    const flash = this._take('flash', this.geoSphere, true);
+    this._spawn({
+      mesh: flash, poolKey: 'flash',
+      pos: new THREE.Vector3(pos.x, pos.y + 0.5, pos.z),
+      color: 0xdff2ff, dur: 0.35,
+      scale0: 0.6 * scale, scale1: 4.6 * scale, opacity: 0.85,
+    });
+    for (let i = 0; i < 4; i++) {
+      const puff = this._take('smoke', this.geoSphere, false);
+      this._spawn({
+        mesh: puff, poolKey: 'smoke',
+        pos: new THREE.Vector3(pos.x + rand(-1.6, 1.6), pos.y + 0.3, pos.z + rand(-1.6, 1.6)),
+        color: 0xd6ebf5, dur: rand(0.5, 0.95),
+        scale0: 0.5 * scale, scale1: rand(2.4, 3.8) * scale, opacity: 0.5,
+        vel: new THREE.Vector3(rand(-2.2, 2.2), rand(2.4, 4.4), rand(-2.2, 2.2)), grav: -3.4,
+      });
+    }
+  }
+
   // 侦察兵倒下：一小团尘土。单独做是为了不触发上面的爆炸震伤，否则会自己炸死自己
   scoutDown(pos) {
     const dust = this._take('smoke', this.geoSphere, false);
