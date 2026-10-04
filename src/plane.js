@@ -653,9 +653,19 @@ export class Plane {
     }
   }
 
+  // 平稳落地、又泡在水里的飞机：炮管/弹链进水了，打出去的子弹"受潮"。
+  // 陆地上趴着烧的那架不算（照原样打）
+  _wet() {
+    if (!this.landed) return false;
+    const t = this.world.terrain;
+    return !!(t.isWater && t.isWater(this.pos.x, this.pos.z));
+  }
+
   _fire(nose, aimDir, sigma, damage) {
+    const wet = this._wet();
     _fireDir.copy(aimDir);
-    const e = sigma || CONFIG.plane.hitSigma;
+    let e = sigma || CONFIG.plane.hitSigma;
+    if (wet) e = Math.min(e * CONFIG.plane.wetSpreadMul, CONFIG.plane.wetSpreadMax);   // 受潮：偏得厉害
     _fireDir.x += gauss() * e;
     _fireDir.y += gauss() * e;
     _fireDir.z += gauss() * e;
@@ -669,6 +679,7 @@ export class Plane {
       owner: this,
       team: this.team,
       kind: 'air',
+      life: wet ? CONFIG.plane.wetBulletLife : 0,   // 受潮的飞不远，到点自己炸
     });
     this.world.effects.muzzleFlash(nose, _fireDir);
   }

@@ -57,12 +57,14 @@ export class BulletManager {
       kind: 'shell',
       life: 0,
       age: 0,
+      puffOnDeath: false,   // 飞到头自己炸一下（"受潮"的子弹），而不是无声消失
     };
     this.bullets.push(b);
     return b;
   }
 
-  spawn({ pos, dir, speed = CONFIG.bullet.speed, damage, owner, team, kind = 'shell' }) {
+  // life 传正数就是"这发子弹只活这么久"（受潮的子弹飞不远，到点自己炸）
+  spawn({ pos, dir, speed = CONFIG.bullet.speed, damage, owner, team, kind = 'shell', life = 0 }) {
     let b;
     if (this.free.length) b = this.free.pop();
     else if (this.bullets.length < this.max) b = this._create();
@@ -78,7 +80,8 @@ export class BulletManager {
     b.damage = damage;
     b.owner = owner;
     b.team = team;
-    b.life = CONFIG.bullet.life;
+    b.life = life > 0 ? life : CONFIG.bullet.life;
+    b.puffOnDeath = life > 0;
     b.age = 0;
     b.group.visible = true;
     b.group.position.copy(pos);
@@ -120,7 +123,9 @@ export class BulletManager {
       b.life -= dt;
 
       if (b.life <= 0) {
-        this._recycle(b);
+        // 受潮的子弹飞到头会自己炸一下（"自爆"），不是无声消失
+        if (b.puffOnDeath) this._impact(b, false);
+        else this._recycle(b);
         continue;
       }
 
