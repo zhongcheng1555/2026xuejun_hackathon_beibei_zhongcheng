@@ -643,7 +643,18 @@ export class Plane {
   // 挨弹：打在机身上（含机头、座舱）＝当场完；打在机翼上＝那片机翼掉，
   // 飞机还活着，只是开始失去平衡（这就是"打到机翼不会直接忽略"）
   damage(amount, source, hitPoint) {
-    if (!this.alive || this.landed) return false;
+    if (!this.alive) return false;
+    // 趴在地上烧的那架（平稳落地、还没烧完）是个活靶子：不再免伤 ——
+    // 之前这里带着 `|| this.landed`，子弹打上去一点反应都没有，等于无敌。
+    // 它已经贴地了，也不再按机翼分部位判：打中就打爆
+    if (this.landed) {
+      this.health -= amount;
+      if (this.health <= 0) {
+        this._destroy(source);
+        return true;
+      }
+      return false;
+    }
     const zone = hitPoint ? this._hitZone(hitPoint) : null;
     if (zone) {
       this.loseWing(zone, 'shot');
