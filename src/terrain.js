@@ -107,6 +107,7 @@ export class Terrain {
     this._buildCrater();      // 火山口里那池岩浆（只有火山图有）
     this._buildStreamSurface();
     this._buildLakeSurface(); // 大湖的水面（只有带 lake 配置的图有）
+    this._buildWadeRing();    // "浅滩能趟到哪儿"的岸线（同上，必须在水位定好之后）
     this._buildWaterPlants(); // 水里的荷叶/芦苇/海草（同上）
     // 城市废墟走"街区"布局，花园迷宫走"挖通道"布局，其他地形是随机撒掩体
     if (biome.maze) this._buildMaze();
@@ -203,6 +204,42 @@ export class Terrain {
       mesh.name = 'lake';
       mesh.renderOrder = 1;
       this.group.add(mesh);
+    }
+  }
+
+  // 湖的"浅滩能趟到哪儿"：沿 32 个方向从岸边往里扫，记下"水深刚好还没超过
+  // wadeDepth"的那条线（归一化椭圆距离）。
+  // 为什么要它：湖盆是平滑挖出来的，水面是固定高度的一块平面 ——
+  // **露出水面的岸线其实在椭圆里面**（大约 k≈0.87），而原来的墙就是椭圆边本身。
+  // 于是坦克会停在离水二三十米的干地上，"一点水都不让沾"。现在墙换成这条
+  // 真正的水深线：浅滩能开进去（浮起来、变慢），只有比 wadeDepth 更深才算墙。
+  _buildWadeRing() {
+    if (!this.lakes.length) return;
+    const N = 32;
+    const wade = CONFIG.tank.wadeDepth;
+    const maxFrac = CONFIG.tank.wadeMaxFrac;
+    for (const L of this.lakes) {
+      const ring = new Float32Array(N);
+      for (let i = 0; i < N; i++) {
+        const th = (i / N) * Math.PI * 2;
+        const cx = Math.cos(th);
+        const cz = Math.sin(th);
+        let kWater = 1.02;      // 露出来的水线（水刚从这儿开始盖住地面）
+        let kWade = 1.02;       // 水深还没超过 wadeDepth 的最里面那条线
+        let seenWater = false;
+        for (let s = 1; s <= 90; s++) {
+          const kk = 1.02 - s * 0.012;       // 从岸边一直扫到接近湖心
+          const h = this.heightAt(L.x + cx * L.rx * kk, L.z + cz * L.rz * kk);
+          const d = L.level - h;
+          if (!seenWater && d > 0.15) { seenWater = true; kWater = kk; }
+          if (d > wade) break;               // 比这深了：就停在上一步
+          kWade = kk;
+        }
+        // 取更靠外的那条：既要水深够浅，也不能一口气趟进湖心
+        // （湖底是起伏的，有些方向上"浅水"能一直延伸到很里面）
+        ring[i] = Math.max(kWade, kWater - maxFrac);
+      }
+      L.wadeRing = ring;
     }
   }
 
@@ -1322,20 +1359,22 @@ export class Terrain {
         let ux = (pos.x - L.x) / L.rx;
         let uz = (pos.z - L.z) / L.rz;
         const len = Math.hypot(ux, uz);
-        // 沿"湖心 → 单位方向"推到岸边外面，并留出车体半径
-        // （归一化空间里 1 个单位 ≈ 半个湖，所以半径要按最小半轴换算）
-        const margin = 1 + radius / Math.min(L.rx, L.rz);
-        // 判定线和推出线必须是同一条：原来判定用 1、推出用 margin，
-        // 于是坦克一旦把车头探进水里（k 刚到 1 以下），就被**瞬移**甩出
-        // 3~4 米 —— 玩起来就是"在有水的图上坦克会自己倒退"。
-        // 现在只要碰到"带车体半径的岸线"就推，推出来正好落在这条线上，
-        // 于是坦克是**停在岸边**（连续、不跳），而不是被弹回去。
-        if (len >= margin) continue;
         if (len < 1e-4) { ux = 1; uz = 0; } else { ux /= len; uz /= len; }
+        // 这个方向上的"深水线"（浅滩能趟到哪儿，见 _buildWadeRing）
+        let lim = 1.0;
+        if (L.wadeRing) {
+          const N = L.wadeRing.length;
+          let idx = Math.round((Math.atan2(uz, ux) / (Math.PI * 2)) * N);
+          idx = ((idx % N) + N) % N;
+          lim = L.wadeRing[idx];
+        }
+        // 判定线和推出线是同一条：坦克**停在浅滩边上**（连续、不跳），
+        // 而不是"探进水里一点就被瞬移甩回来"（那是玩家反馈的"自动倒退"）
+        if (len >= lim) continue;
         const bx = pos.x;
         const bz = pos.z;
-        pos.x = L.x + ux * L.rx * margin;
-        pos.z = L.z + uz * L.rz * margin;
+        pos.x = L.x + ux * L.rx * lim;
+        pos.z = L.z + uz * L.rz * lim;
         if (out) {
           out.x += pos.x - bx;
           out.z += pos.z - bz;
