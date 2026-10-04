@@ -94,7 +94,9 @@ body {
 /* 战报 */
 #feed {
   position: absolute;
-  top: 92px;
+  /* 别写死像素：位置跟着屏幕高度走（12vh），高分屏上就不会挤在最上面。
+     max() 里的 88px 只是个下限 —— 保证矮屏时不会顶到上方的状态栏 */
+  top: max(88px, 12vh);
   right: 18px;
   width: 340px;
   display: flex;
