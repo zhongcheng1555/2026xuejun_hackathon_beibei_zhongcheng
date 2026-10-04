@@ -1322,11 +1322,16 @@ export class Terrain {
         let ux = (pos.x - L.x) / L.rx;
         let uz = (pos.z - L.z) / L.rz;
         const len = Math.hypot(ux, uz);
-        if (len >= 1) continue;                       // 已经在岸上了
-        if (len < 1e-4) { ux = 1; uz = 0; } else { ux /= len; uz /= len; }
         // 沿"湖心 → 单位方向"推到岸边外面，并留出车体半径
         // （归一化空间里 1 个单位 ≈ 半个湖，所以半径要按最小半轴换算）
         const margin = 1 + radius / Math.min(L.rx, L.rz);
+        // 判定线和推出线必须是同一条：原来判定用 1、推出用 margin，
+        // 于是坦克一旦把车头探进水里（k 刚到 1 以下），就被**瞬移**甩出
+        // 3~4 米 —— 玩起来就是"在有水的图上坦克会自己倒退"。
+        // 现在只要碰到"带车体半径的岸线"就推，推出来正好落在这条线上，
+        // 于是坦克是**停在岸边**（连续、不跳），而不是被弹回去。
+        if (len >= margin) continue;
+        if (len < 1e-4) { ux = 1; uz = 0; } else { ux /= len; uz /= len; }
         const bx = pos.x;
         const bz = pos.z;
         pos.x = L.x + ux * L.rx * margin;
