@@ -263,6 +263,8 @@ export class Game {
     this.ambient.intensity = b.light.ambient;
 
     if (this.night) this._applyNightLook(b);
+    // 地形自己要知道是不是夜战：夜里的岩浆要更亮（见 terrain.update）
+    this.terrain.night = this.night;
     // 放最后：环境反射要跟着"最终那套天空颜色"走（夜里就是月夜的颜色）
     this._applySkyEnv();
   }

@@ -323,14 +323,17 @@ export class Terrain {
   // 每帧：让岩浆微微呼吸（热量感），并把光源挂到玩家附近
   update(dt, focus) {
     const s = this.stream;
+    // 夜里的岩浆要比白天更亮（它是光源）。这个倍率由 main.js 每局设一次
+    const lit = this.night ? (CONFIG.night.lavaLightMul || 1) : 1;
+    if (this.craterLight) this.craterLight.intensity = 1.3 * lit;
     if (!s || !s.glow || !this.streamMesh) return;
     this._glowT = (this._glowT || 0) + dt;
     const k = 0.8 + Math.sin(this._glowT * 1.7) * 0.12 + Math.sin(this._glowT * 4.3) * 0.05;
-    this.streamMesh.material.emissiveIntensity = k;
+    this.streamMesh.material.emissiveIntensity = k * (this.night ? (CONFIG.night.lavaGlowMul || 1) : 1);
     if (this.streamLight && focus) {
       // 点光源跟着镜头附近的岩浆段，不跟着玩家就照不到
       this.streamLight.position.set(this.streamCenterX(focus.z), this.heightAt(this.streamCenterX(focus.z), focus.z) + 6, focus.z);
-      this.streamLight.intensity = k * 1.15;
+      this.streamLight.intensity = k * 1.15 * (this.night ? (CONFIG.night.lavaLightMul || 1) : 1);
     }
   }
 
@@ -379,6 +382,50 @@ export class Terrain {
       }
       col.needsUpdate = true;
     }
+    // 地面顶点色只改"颜色"，不发光 —— 夜里没太阳，那一池岩浆就只是一团暗红。
+    // 这里再贴着碗形地形叠一层**加法混合**的发光面（中心最亮、边缘淡出），
+    // 它不吃光照也不吃雾，所以白天夜里都是"一池会发光的岩浆"。
+    // 不用平板：平板在碗形地形上会穿帮，所以按网格采样 heightAt 贴着地面铺。
+    const seg = 20;
+    const cr2 = v.crater * 0.95;
+    const vpos = [];
+    const vcol = [];
+    const vidx = [];
+    const lavaC = new THREE.Color(color);
+    for (let j = 0; j <= seg; j++) {
+      for (let i = 0; i <= seg; i++) {
+        const x = v.x + ((i / seg) - 0.5) * 2 * cr2;
+        const z = v.z + ((j / seg) - 0.5) * 2 * cr2;
+        const d = Math.hypot(x - v.x, z - v.z);
+        vpos.push(x, this.heightAt(x, z) + 0.3, z);
+        if (d >= cr2) { vcol.push(0, 0, 0); continue; }
+        const k = 1 - d / cr2;
+        const b = 0.3 + 0.7 * k * k;
+        vcol.push(lavaC.r * b, lavaC.g * b, lavaC.b * b);
+      }
+    }
+    for (let j = 0; j < seg; j++) {
+      for (let i = 0; i < seg; i++) {
+        const a = j * (seg + 1) + i;
+        vidx.push(a, a + 1, a + seg + 1, a + 1, a + seg + 2, a + seg + 1);
+      }
+    }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute(vpos, 3));
+    gg.setAttribute('color', new THREE.Float32BufferAttribute(vcol, 3));
+    gg.setIndex(vidx);
+    const gm = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      fog: false,          // 加法混合下再叠雾会糊成一团，直接不吃雾
+    });
+    this.craterGlow = new THREE.Mesh(gg, gm);
+    this.craterGlow.name = 'craterGlow';
+    this.craterGlow.renderOrder = 2;
+    this.group.add(this.craterGlow);
+
     const y = this.heightAt(v.x, v.z);
     this.craterLight = new THREE.PointLight(color, 1.3, 170, 2);
     this.craterLight.position.set(v.x, y + 12, v.z);

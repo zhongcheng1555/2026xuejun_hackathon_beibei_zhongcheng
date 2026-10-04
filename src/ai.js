@@ -345,6 +345,32 @@ export class TankAI {
         ax = dir;
         az = 0;
         mag = 1;
+        // 可岸边被一堆石头堵住了：光靠"贴墙滑行"容易在几块石头之间来回蹭，
+        // 最后活活烧死。直接试 8 个方向，挑一个"前面足够空、又不往岩浆深处走"的
+        if (tank.blocked) {
+          const base = Math.atan2(ax, az);
+          let bestA = base;
+          let bestScore = -Infinity;
+          for (let i = 0; i < 8; i++) {
+            const a = base + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 4);
+            const dx = Math.sin(a);
+            const dz = Math.cos(a);
+            let clear = 1;
+            for (let s = 3; s <= 15; s += 4) {
+              if (t.hitCollider(tank.pos.x + dx * s, tank.pos.y + 1, tank.pos.z + dz * s)) {
+                clear = 0;
+                break;
+              }
+            }
+            const score = clear * 2 + dx * ax + dz * az;   // 空 + 朝外
+            if (score > bestScore) {
+              bestScore = score;
+              bestA = a;
+            }
+          }
+          ax = Math.sin(bestA);
+          az = Math.cos(bestA);
+        }
       } else {
         // 兜底：既没有河也没有火山（理论上不该发生），往场地中间退
         const len = Math.hypot(tank.pos.x, tank.pos.z) || 1;
