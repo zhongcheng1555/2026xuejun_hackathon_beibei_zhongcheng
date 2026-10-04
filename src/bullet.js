@@ -134,6 +134,9 @@ export class BulletManager {
       _dirNorm.copy(b.vel).normalize();
       b.group.quaternion.setFromUnitVectors(FORWARD, _dirNorm);
 
+      // 彩蛋：朝太阳方向打上去的子弹算"打中太阳"（具体判定在 Game 里）
+      if (this.world.sunShot && _dirNorm.y > 0.45) this.world.sunShot(b.pos, _dirNorm);
+
       // 1) 地面
       const gh = terrain.heightAt(b.pos.x, b.pos.z);
       if (b.pos.y <= gh) {

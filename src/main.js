@@ -26,6 +26,10 @@ const _sunOffset = new THREE.Vector3(90, 150, 60);
 // 天上那颗太阳的方向：和平行光用的是同一个方向，
 // 这样"天上看到的太阳"和"水面/金属上的反光"才对得上（玩家反馈：湖面有太阳、天上没有）
 const _sunDir = _sunOffset.clone().normalize();
+// 打碎太阳之后要黑成"深夜"，比普通夜战还暗一截（配色仍沿用夜战那套）
+const _deepFog = new THREE.Color(CONFIG.night.fog);
+const _deepSkyTop = new THREE.Color(CONFIG.night.skyTop);
+const _deepSkyBottom = new THREE.Color(CONFIG.night.skyBottom);
 
 // 现画一张很小的天空渐变图（equirect）当作环境反射源：上蓝下亮，和天空球同色。
 // 不引任何外部图片；横竖都只有几十像素，代价可以忽略。
@@ -194,6 +198,7 @@ export class Game {
         sunColor: { value: new THREE.Color(0xfff0d8) },
         sunRad: { value: 0.05 },
         sunHalo: { value: 0.5 },
+        sunFade: { value: 1 },     // 彩蛋：打碎太阳时降到 0
       },
       vertexShader: `
         varying vec3 vWorldPosition;
@@ -216,6 +221,7 @@ export class Game {
         uniform vec3 sunColor;
         uniform float sunRad;    // 圆面的角半径（弧度）
         uniform float sunHalo;   // 光晕强度
+        uniform float sunFade;   // 1 = 正常，0 = 太阳没了（打碎彩蛋）
         varying vec3 vWorldPosition;
         varying vec3 vLocalPos;
         void main() {
@@ -227,7 +233,7 @@ export class Game {
           float ang = acos(clamp(c, -1.0, 1.0));
           float disc = 1.0 - smoothstep(sunRad * 0.8, sunRad, ang);
           float halo = pow(max(c, 0.0), 30.0) * sunHalo;
-          col += sunColor * (disc * 1.15 + halo);
+          col += sunColor * (disc * 1.15 + halo) * sunFade;
           gl_FragColor = vec4(col, 1.0);
         }
       `,
@@ -267,6 +273,14 @@ export class Game {
   // 按地形类型重建整张地图（每局都会换）
   _buildTerrain(biome) {
     if (this.terrain) this.terrain.dispose();
+    // 每局重置"打碎太阳"的彩蛋状态（碎块也要收掉，别留到下一局）
+    this.sunBroken = false;
+    this.sunBreakT = 0;
+    if (this.sunShardGroup) {
+      this.scene.remove(this.sunShardGroup);
+      this.sunShardGroup = null;
+      this.sunShards = null;
+    }
     this.terrain = new Terrain(this.scene, makeNoise(Math.floor(rand(1, 99999))), biome);
     if (this.effects) this.effects.terrain = this.terrain;
     this._applyBiomeLook(biome);
@@ -287,6 +301,18 @@ export class Game {
     this.hemi.intensity = b.light.hemi;
     this.ambient.intensity = b.light.ambient;
 
+    // 记下"白天那套"基准：太阳被打碎之后要从这一套往深夜插值
+    this._dayLook = {
+      sun: b.light.sunIntensity,
+      hemi: b.light.hemi,
+      ambient: b.light.ambient,
+      fog: this.scene.fog.color.clone(),
+      fogNear: b.fog.near,
+      fogFar: b.fog.far,
+      skyTop: u.topColor.value.clone(),
+      skyBottom: u.bottomColor.value.clone(),
+    };
+
     if (this.night) this._applyNightLook(b);
     // 地形自己要知道是不是夜战：夜里的岩浆要更亮（见 terrain.update）
     this.terrain.night = this.night;
@@ -304,6 +330,7 @@ export class Game {
       sunU.sunRad.value = 0.05;
       sunU.sunHalo.value = 0.5;
     }
+    sunU.sunFade.value = this.sunBroken ? 0 : 1;
     // 放最后：环境反射要跟着"最终那套天空颜色"走（夜里就是月夜的颜色）
     this._applySkyEnv();
   }
@@ -346,6 +373,91 @@ export class Game {
     this.sun.intensity = b.light.sunIntensity * n.sunMul;
     this.hemi.intensity = b.light.hemi * n.hemiMul;
     this.ambient.intensity = b.light.ambient * n.ambientMul;
+  }
+
+  // ---------- 彩蛋：把太阳打碎（别写进规则，让玩家自己发现）----------
+
+  // 子弹每帧回调进来：方向指着太阳就算"打中"。太阳在天上无穷远，
+  // 所以判定是"方向夹角"而不是"打到某个点"
+  sunShot(pos, dir) {
+    if (this.sunBroken) return;
+    if (dir.y < 0.4) return;                                  // 往上打的才算
+    if (dir.dot(_sunDir) < Math.cos(CONFIG.sunBreak.hitRad)) return;
+    this._breakSun();
+  }
+
+  _breakSun() {
+    this.sunBroken = true;
+    this.sunBreakT = 0;
+    this._spawnSunShards();
+    this.audio.explosion(this.camera.position.clone().addScaledVector(_sunDir, 60), 1);
+    this.hud.feed('天上那颗太阳，碎了', 'danger');
+  }
+
+  // 太阳的"碎块"：一群加法混合的小亮球，从天上的太阳那儿往外飞散、变淡
+  _spawnSunShards() {
+    const S = CONFIG.sunBreak;
+    const group = new THREE.Group();
+    group.name = 'sunShards';
+    const geo = new THREE.SphereGeometry(3.4, 6, 5);
+    const center = this.camera.position.clone().addScaledVector(_sunDir, 760);
+    this.sunShards = [];
+    for (let i = 0; i < S.shards; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffe6a8, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      const off = new THREE.Vector3(rand(-9, 9), rand(-9, 9), rand(-9, 9));
+      m.position.copy(center).add(off);
+      const v = off.clone().normalize().multiplyScalar(rand(16, 46));
+      group.add(m);
+      this.sunShards.push({ m, mat, v });
+    }
+    this.scene.add(group);
+    this.sunShardGroup = group;
+  }
+
+  _updateSunShards(dt) {
+    if (!this.sunShards) return;
+    const a = clamp(1 - (this.sunBreakT - 0.5) / 2.6, 0, 1);
+    for (const s of this.sunShards) {
+      s.m.position.addScaledVector(s.v, dt);
+      s.v.multiplyScalar(Math.max(0, 1 - dt * 0.7));
+      s.mat.opacity = 0.95 * a;
+    }
+    if (a <= 0) {
+      this.scene.remove(this.sunShardGroup);
+      this.sunShardGroup = null;
+      this.sunShards = null;
+    }
+  }
+
+  // 碎了之后：太阳渐隐 + 整个天从"白天那套"平滑黑成深夜（这一局不再亮回来）
+  _updateSunBreak(dt) {
+    if (!this.sunBroken) return;
+    this.sunBreakT += dt;
+    const S = CONFIG.sunBreak;
+    const n = CONFIG.night;
+    const u = this.sky.material.uniforms;
+    u.sunFade.value = clamp(1 - this.sunBreakT / S.fadeTime, 0, 1);
+    this._updateSunShards(dt);
+
+    const d = this._dayLook;
+    if (!d) return;
+    const k = clamp((this.sunBreakT - 0.5) / S.nightTime, 0, 1);
+    if (k <= 0) return;
+    const lerp = (a, c) => a + (c - a) * k;
+    this.sun.intensity = lerp(d.sun, d.sun * n.sunMul * 0.3);
+    this.hemi.intensity = lerp(d.hemi, d.hemi * n.hemiMul * 0.45);
+    this.ambient.intensity = lerp(d.ambient, d.ambient * n.ambientMul * 0.55);
+    this.scene.fog.color.copy(d.fog).lerp(_deepFog, k);
+    this.scene.fog.near = lerp(d.fogNear, d.fogNear * n.fogScale[0]);
+    this.scene.fog.far = lerp(d.fogFar, d.fogFar * n.fogScale[1]);
+    u.topColor.value.copy(d.skyTop).lerp(_deepSkyTop, k);
+    u.bottomColor.value.copy(d.skyBottom).lerp(_deepSkyBottom, k);
+    // 天黑了，岩浆这类自发光的东西跟着亮起来
+    this.terrain.night = true;
   }
 
   _onResize() {
@@ -1489,6 +1601,8 @@ export class Game {
     this.updateCamera(dt);
     // 岩浆发光 / 履带印淡出这类跟地形绑定的小动画
     this.terrain.update(dt, this.player ? this.player.pos : this.camera.position);
+    // 彩蛋：太阳被打碎之后的碎块飞散 + 天黑下来
+    this._updateSunBreak(dt);
     this.treads.update(dt);
 
     // 音频：镜头位置/朝向每帧同步一次（用来算左右声道），引擎底噪跟着速度走
