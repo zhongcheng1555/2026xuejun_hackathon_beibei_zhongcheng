@@ -124,6 +124,16 @@
     </div>
   </div>
 
+  <!-- 自定义地图：贴在菜单右下角，默认收成一条小字（不抢眼）。
+       点开才展开，勾想玩的地形；一个都不勾 = 还是全随机 -->
+  <div id="map-picker" class="collapsed">
+    <button id="map-picker-head" type="button">
+      <span id="map-picker-label">自定义地图</span>
+      <span class="mp-caret">▾</span>
+    </button>
+    <div id="map-picker-body"></div>
+  </div>
+
   <!-- 开发用的测试开关：默认收起来（菜单里按 T 调出来 / 再按一次收回去）。
        正式玩的时候不用管它们；要验证纯空战/纯陆战那几种特殊玩法时才打开 -->
   <div id="test-toggles" class="hidden">

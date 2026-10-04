@@ -495,7 +495,11 @@ export class Game {
     // 每局重新抽一种地形：地貌、大小、能见度、掩体密度全换
     // 另外有 10% 概率赶上夜战（任何地形都可能入夜）
     this.night = Math.random() < CONFIG.night.chance;
-    this.currentBiome = BIOMES[randInt(0, BIOMES.length - 1)];
+    // 菜单右下角「自定义地图」勾了地形就只在这几种里抽；没勾（默认）还是全随机
+    const pool = this.hud && this.hud.biomePool ? this.hud.biomePool : [];
+    const picked = pool.map((id) => BIOMES.find((b) => b.id === id)).filter(Boolean);
+    const list = picked.length ? picked : BIOMES;   // 没勾 / 勾的都不认识 → 全随机
+    this.currentBiome = list[randInt(0, list.length - 1)];
     this._buildTerrain(this.currentBiome);
     this.treads.reset(this.terrain);
 

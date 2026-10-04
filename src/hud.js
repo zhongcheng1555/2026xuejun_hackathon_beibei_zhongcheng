@@ -1,6 +1,6 @@
 // HUD：准星、血条、弹夹、战报、波次横幅、结算面板（没有小地图）
 
-import { CONFIG } from './config.js';
+import { CONFIG, BIOMES } from './config.js';
 
 export class HUD {
   constructor() {
@@ -58,6 +58,11 @@ export class HUD {
       forcePureAir: document.getElementById('force-pure-air'),
       forcePureGround: document.getElementById('force-pure-ground'),
       forcePureTank: document.getElementById('force-pure-tank'),
+      // 自定义地图：右下角那个默认收起来的小条
+      mapPicker: document.getElementById('map-picker'),
+      mapPickerHead: document.getElementById('map-picker-head'),
+      mapPickerLabel: document.getElementById('map-picker-label'),
+      mapPickerBody: document.getElementById('map-picker-body'),
     };
 
     // 开发开关：按 T 把右下角那块调出来 / 收回去（默认藏着 —— 正式玩不需要它）
@@ -72,6 +77,55 @@ export class HUD {
 
     this._bindRules();
     this._bindPicks();
+    this._bindMapPicker();
+  }
+
+  // 自定义地图（右下角）：默认收成一条小字，点开才能勾地形。
+  // 一个都不勾 = 全随机（默认）；勾了就在勾中的那几种里抽
+  _bindMapPicker() {
+    const head = this.el.mapPickerHead;
+    const body = this.el.mapPickerBody;
+    this.mapPool = new Set();
+    this.mapChips = [];
+    if (!head || !body) return;
+
+    const addChip = (id, label) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'mp-chip';
+      chip.textContent = label;
+      chip.addEventListener('click', () => {
+        if (id === '') this.mapPool.clear();                 // 「全随机」= 清空
+        else if (this.mapPool.has(id)) this.mapPool.delete(id);
+        else this.mapPool.add(id);
+        this._syncMapPicker();
+      });
+      body.appendChild(chip);
+      this.mapChips.push({ id, chip });
+    };
+    for (const b of BIOMES) addChip(b.id, b.name);           // 现从 BIOMES 生成，以后加地图不用改 HTML
+    addChip('', '全随机');
+
+    head.addEventListener('click', () => {
+      if (this.el.mapPicker) this.el.mapPicker.classList.toggle('collapsed');
+    });
+    this._syncMapPicker();
+  }
+
+  _syncMapPicker() {
+    for (const { id, chip } of this.mapChips) {
+      chip.classList.toggle('on', id === '' ? this.mapPool.size === 0 : this.mapPool.has(id));
+    }
+    if (this.el.mapPickerLabel) {
+      // 收起来时只显示这一行；勾过就把数量带上，免得玩家忘了自己锁过地图
+      const n = this.mapPool.size;
+      this.el.mapPickerLabel.textContent = n === 0 ? '自定义地图' : `自定义地图 · ${n}`;
+    }
+  }
+
+  // 本局从哪几种地形里抽（空数组 = 全部，保持原来的全随机）
+  get biomePool() {
+    return [...this.mapPool];
   }
 
   // 菜单和结算面板上都有"开坦克 / 开飞机"，两边同步选中状态

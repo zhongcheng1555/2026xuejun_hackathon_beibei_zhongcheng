@@ -587,12 +587,95 @@ body {
   transform: translateY(2px);
 }
 
+/* 自定义地图：贴在菜单右下角，默认收成一条小字（不抢眼，几乎和背景融在一起）。
+   点开才展开成一张小卡片，勾想玩的地形；一个都不勾 = 全随机 */
+#map-picker {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  user-select: none;
+}
+
+#map-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(12, 14, 19, 0.5);
+  border: 1px solid rgba(255, 180, 84, 0.14);
+  color: #75797f;
+  font-size: 12px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+#map-picker-head:hover,
+#map-picker:not(.collapsed) #map-picker-head {
+  opacity: 1;
+  color: #d8cdbb;
+  border-color: rgba(255, 180, 84, 0.34);
+}
+
+#map-picker .mp-caret {
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+#map-picker:not(.collapsed) .mp-caret {
+  transform: rotate(180deg);
+}
+
+#map-picker-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 6px;
+  width: min(320px, 76vw);
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: rgba(12, 14, 19, 0.86);
+  border: 1px solid rgba(255, 180, 84, 0.2);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+#map-picker.collapsed #map-picker-body {
+  display: none;
+}
+
+#map-picker-body .mp-chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #1d232c;
+  border: 1px solid rgba(255, 180, 84, 0.16);
+  color: #b9b2a6;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#map-picker-body .mp-chip:hover {
+  color: #e6ddcd;
+}
+
+#map-picker-body .mp-chip.on {
+  background: rgba(255, 180, 84, 0.18);
+  border-color: rgba(255, 180, 84, 0.62);
+  color: #ffd9a0;
+}
+
 /* 纯空战的测试开关：贴在菜单右下角。z-index 压在结算黑屏(10)和进场页(20)下面，
    所以开打前那一下黑屏、以及"进军！"那一页都会把它盖住 */
 #test-toggles {
   position: absolute;
   right: 16px;
-  bottom: 14px;
+  bottom: 60px;      /* 让开右下角那条「自定义地图」 */
   z-index: 5;
   display: flex;
   flex-direction: column;
