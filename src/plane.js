@@ -729,13 +729,9 @@ export class Plane {
       this._destroy(null, 'burn');
       return;
     }
-    // 烧着的这一架本身就是个火堆：沾到边的坦克都会挨烧（不是只有正中心那辆）
-    for (const tk of this.world.tanks) {
-      if (!tk.alive) continue;
-      const r = this.radius + tk.radius + CONFIG.plane.wreckHitRadius;
-      if (this.pos.distanceToSquared(tk.pos) > r * r) continue;
-      tk.damage(CONFIG.plane.wreckBurnDps * dt, this);
-    }
+    // 注意：趴在地上烧的这架**不再对旁边的坦克造成持续伤害**。
+    // 它没有目标、也不分敌我，纯粹靠"站在旁边"就一直在烧队友/敌人，
+    // 玩家反馈这不合理，去掉了（砸中那一下的伤害见 wreckDamage，不受影响）
     const gy = this.world.terrain.heightAt(this.landX, this.landZ) + 0.9;
     if (this.isPlayer) {
       this._playerSteer(dt);                 // 机头还能转（用视线方向），扳机还能开

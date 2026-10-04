@@ -289,7 +289,6 @@ export const CONFIG = {
     wreckSlowTime: 5,       // 被砸中后跑不动多久（秒）
     wreckSlowMul: 0.4,      // 这段时间的速度倍率（只剩四成，等于砍掉六成）
     wreckDamage: 45,        // 被坠落的飞机砸中：一次掉这么多血（坦克满血才 100）
-    wreckBurnDps: 9,        // 趴在地上烧的那架：沾到就每秒烧这么多血
     // 断翼之后的坠机：先想清楚"该摔哪儿"，再想"还能拉几个垫背的"
     wreckAvoidMate: 45,     // 附近有自己人就往外偏（绝不故意砸在队友头上）
     fallAirRange: 170,      // 坠落途中还能朝天上的敌机开炮的范围
