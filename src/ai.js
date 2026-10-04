@@ -79,6 +79,21 @@ export class TankAI {
     return Math.hypot(t.pos.x - this.tank.pos.x, t.pos.z - this.tank.pos.z);
   }
 
+  // 最近的一辆敌方**坦克**（不看飞机）。换目标时用：贴到脸前的敌人优先级最高
+  _nearestFoeTank(range = Infinity) {
+    let best = null;
+    let bd = range;
+    for (const t of this.world.tanks) {
+      if (!t.alive || t === this.tank || t.team === this.tank.team) continue;
+      const d = this._distanceTo(t);
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
+    }
+    return best;
+  }
+
   // 搜索范围：平时 200m；到了残局就放大，不然幸存者会各自在地图上逛，谁也碰不到谁
   _searchRange() {
     let foes = 0;
@@ -565,6 +580,21 @@ export class TankAI {
     // 夜里跟丢了就把天上的目标丢掉（等"看见"了会重新锁上）
     this._dropBlindAirTarget();
 
+    // 有敌人凑到脸前就换目标。原来只要老目标还活着、还在射程里，AI 就一直咬死它，
+    // 于是别人可以贴到它鼻子底下白打（玩家反馈：一辆车开到另一辆面前，
+    // 它还在打原来的目标）。这里要求"新目标明显更近（不到 0.6 倍）"才换，避免来回抖。
+    if (this.target && !this.target.isPlane && !this.target.isScout) {
+      const curD = this._distanceTo(this.target);
+      const near = this._nearestFoeTank();
+      if (near && near !== this.target) {
+        const nd = this._distanceTo(near);
+        if (nd < curD * 0.6 && nd < CONFIG.ai.engageMax) {
+          this.target = near;
+          this.reactionLeft = Math.min(this.reactionLeft, 0.5);
+        }
+      }
+    }
+
     // 挨打之后会转向攻击来源。但只还击敌人、而且只还击地面目标：
     // 友军本来就可能不小心打到自己，回头去打自己人是最蠢的事；飞机也追不上，不值得放下地面目标
     const attacker = tank.lastHitBy;
@@ -863,6 +893,20 @@ export class TankAI {
       const [ix, iz] = this._keepInside(dodgeScout[0], dodgeScout[1]);
       this._move(ix, iz, 1);
       return;
+    }
+    // 中间隔着一栋楼（这发炮弹根本打不出去）：别傻站在那儿保持距离。
+    // 原来只看距离，于是"隔着一栋楼的两辆车"会永远互相绕圈 —— 谁都打不着谁，
+    // 谁也不靠近（玩家反馈：隔了障碍物还硬要保持距离、转来转去）。
+    // 打不着就压过去，找个能打的位置（贴墙滑行负责绕开楼）
+    if (this.world.terrain.losBlocked) {
+      _losFrom.set(tank.pos.x, tank.pos.y + 2.4, tank.pos.z);
+      _losTo.set(t.pos.x, t.pos.y + 1.7, t.pos.z);
+      if (this.world.terrain.losBlocked(_losFrom, _losTo)) {
+        const dodgeLos = this._dodgeAllyLine(ux, uz);
+        const [ix, iz] = this._keepInside(dodgeLos[0], dodgeLos[1]);
+        this._move(ix, iz, 1);
+        return;
+      }
     }
     if (dist > CONFIG.ai.engageMax) {
       mx = ux;

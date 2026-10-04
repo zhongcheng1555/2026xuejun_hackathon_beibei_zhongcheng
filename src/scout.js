@@ -186,6 +186,12 @@ export class ScoutManager {
 
   _move(s, dt) {
     const terrain = this.world.terrain;
+    // 踩进岩浆 / 火山火里：侦察兵是步兵，直接烧没。
+    // 原来他们对岩浆完全免疫，站在岩浆里照样活蹦乱跳（玩家反馈"不烫"）
+    if (terrain.hazardAt(s.pos.x, s.pos.z) > 0) {
+      s._die('burn');
+      return;
+    }
     // 附近有敌方坦克就躲开
     let flee = null;
     let fleeDist = CONFIG.scout.fleeRange;
@@ -214,7 +220,15 @@ export class ScoutManager {
     s.repathTimer -= dt;
     let tx = s.wander.x;
     let tz = s.wander.z;
-    if (flee) {
+    // 河 / 岩浆：人不是两栖车，主动绕开 ——
+    // 原来侦察兵会一头走进河里，脚陷到河床下面（看着就是穿模），
+    // 走到岩浆边缘也照走不误。这里只要靠近就往外推。
+    const water = terrain.stream && terrain.streamDistance(s.pos.x, s.pos.z) < terrain.stream.width * 1.3;
+    if (water) {
+      const cx = terrain.streamCenterX(s.pos.z);
+      tx = s.pos.x + (s.pos.x >= cx ? 1 : -1) * 26;
+      tz = s.pos.z + rand(-6, 6);
+    } else if (flee) {
       tx = s.pos.x - (flee.pos.x - s.pos.x);
       tz = s.pos.z - (flee.pos.z - s.pos.z);
     } else if (avoid) {

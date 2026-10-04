@@ -21,6 +21,15 @@ const _right = new THREE.Vector3(1, 0, 0);
 
 let planeId = 1;
 
+// "飞行员手抖"每帧都要掷一次骰子。要是它混进主随机流（Math.random），
+// 就会把别的系统（俯冲时机、巡逻点、命中散布）的随机序列整体错开 ——
+// 手感会无缘无故地漂，测试也跟着乱。所以给它一条独立的随机流。
+let _pilotSeed = 0x9e3779b9;
+function _pilotRoll() {
+  _pilotSeed = (_pilotSeed * 1103515245 + 12345) & 0x7fffffff;
+  return _pilotSeed / 0x7fffffff;
+}
+
 export class Plane {
   constructor(world, team = TEAM.ALLY) {
     this.world = world;
@@ -59,6 +68,9 @@ export class Plane {
     this.lives = 0;
     this.respawnTimer = -1;
     this.retired = false;
+    // AI 飞行员偶尔"手抖"：>0 的这段时间压着机头不管，会真的扎到地上/飞出边界。
+    // 玩家的飞机不参与（杆在玩家手里）
+    this.pilotError = 0;
 
     // ---------- 玩家操控（isPlayer 时走这一套，不再跑 AI 状态机）----------
     this.isPlayer = false;
@@ -176,6 +188,7 @@ export class Plane {
     this.controlFire = false;
     this.fireCooldown = 0;
     this.burst = CONFIG.playerPlane.burst;
+    this.pilotError = 0;
     this._pickWaypoint();
     this.vel.copy(_dir.copy(this.waypoint).sub(this.pos).normalize()).multiplyScalar(CONFIG.plane.speed);
     this._orient(0);
@@ -379,6 +392,24 @@ export class Plane {
     this._steer(_desired, 1.1, dt);
   }
 
+  // 飞行员偶尔"手抖"：概率极低，但一旦发生就是真的 —— 压着机头扎向地面
+  // （扎到地/障碍上就真撞），或者一路直直飞出边界（这段时间不走边界保护）。
+  // 之前 AI 飞机是永远不摔的。玩家的飞机不参与（update 里 isPlayer 分支在前）
+  _pilotError(dt) {
+    if (this.pilotError <= 0) {
+      if (_pilotRoll() >= CONFIG.plane.pilotErrorChance * dt) return false;
+      this.pilotError = rand(CONFIG.plane.pilotErrorTime[0], CONFIG.plane.pilotErrorTime[1]);
+    }
+    this.pilotError -= dt;
+    _desired.copy(this.vel).normalize();
+    _desired.y = -1.2;         // 机头朝下
+    _desired.x *= 0.3;
+    _desired.z *= 0.3;
+    _desired.normalize();
+    this._steer(_desired, 0.8, dt);
+    return true;               // 这一帧由"手抖"接管
+  }
+
   _pickTarget() {
     // 只打对面的地面部队：蓝机帮你打红车，红机专打蓝车
     const foe = this.team === TEAM.ALLY ? TEAM.ENEMY : TEAM.ALLY;
@@ -450,6 +481,8 @@ export class Plane {
     if (this.isPlayer) {
       // 玩家自己握着操纵杆，不跑 AI 状态机
       this._playerSteer(dt);
+    } else if (this._pilotError(dt)) {
+      // 手抖了：这一帧由"飞行员失误"接管（继续往下走落点/边界判定，所以会真撞）
     } else if (this._nearEdge()) {
       // 快出界了：别的都先放一放，专心拐回场地里，别自己撞墙
       this._edgeGuard(dt);
