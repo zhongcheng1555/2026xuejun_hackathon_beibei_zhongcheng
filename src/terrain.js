@@ -220,6 +220,7 @@ export class Terrain {
     const maxFrac = CONFIG.tank.wadeMaxFrac;
     for (const L of this.lakes) {
       const ring = new Float32Array(N);
+      const water = new Float32Array(N);   // 真实水线（地面刚低于水面）——炮艇用它当"海岸"
       for (let i = 0; i < N; i++) {
         const th = (i / N) * Math.PI * 2;
         const cx = Math.cos(th);
@@ -238,8 +239,10 @@ export class Terrain {
         // 取更靠外的那条：既要水深够浅，也不能一口气趟进湖心
         // （湖底是起伏的，有些方向上"浅水"能一直延伸到很里面）
         ring[i] = Math.max(kWade, kWater - maxFrac);
+        water[i] = kWater;
       }
       L.wadeRing = ring;
+      L.waterRing = water;   // 水面那圈（椭圆本身比水大得多 —— 椭圆里靠外这一圈其实是滩）
     }
   }
 
@@ -1355,7 +1358,8 @@ export class Terrain {
 
   // ---------- 碰撞查询 ----------
 
-  resolveCircle(pos, radius, out) {
+  // ignoreWater 给炮艇用：水里才是它的地盘，不能把它从水里推出去（见 boat.js）
+  resolveCircle(pos, radius, out, ignoreWater = false) {
     const cx = Math.floor((pos.x + this.half) / this.cell);
     const cz = Math.floor((pos.z + this.half) / this.cell);
     for (let dz = -1; dz <= 1; dz++) {
@@ -1386,7 +1390,7 @@ export class Terrain {
         }
       }
     }
-    this._pushOutOfWater(pos, radius, out);
+    if (!ignoreWater) this._pushOutOfWater(pos, radius, out);
     const limit = this.playable;
     pos.x = clamp(pos.x, -limit, limit);
     pos.z = clamp(pos.z, -limit, limit);

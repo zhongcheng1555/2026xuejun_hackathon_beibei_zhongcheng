@@ -58,6 +58,7 @@ export class HUD {
       forcePureAir: document.getElementById('force-pure-air'),
       forcePureGround: document.getElementById('force-pure-ground'),
       forcePureTank: document.getElementById('force-pure-tank'),
+      forcePureSea: document.getElementById('force-pure-sea'),
       // 自定义地图：右下角那个默认收起来的小条
       mapPicker: document.getElementById('map-picker'),
       mapPickerHead: document.getElementById('map-picker-head'),
@@ -141,7 +142,7 @@ export class HUD {
   }
 
   setSide(side) {
-    if (side !== 'tank' && side !== 'plane') return;
+    if (side !== 'tank' && side !== 'plane' && side !== 'boat') return;
     this.side = side;
     this._syncPicks();
   }
@@ -154,7 +155,11 @@ export class HUD {
     if (desc) {
       // 开飞机不写备注（玩家要求：选边的时候别给飞机加注解）。
       // 留空但保留这个元素，免得切来切去时下面的按钮上下跳
-      desc.textContent = this.side === 'plane' ? '' : '坦克：装甲厚、能修车，扛得住几发。';
+      desc.textContent = this.side === 'plane'
+        ? ''
+        : this.side === 'boat'
+          ? '炮艇：只能在水里跑，炮慢、皮薄，换的是航速（会自动换成海图）。'
+          : '坦克：装甲厚、能修车，扛得住几发。';
     }
   }
 
@@ -169,6 +174,10 @@ export class HUD {
 
   get forcePureTank() {
     return !!(this.el.forcePureTank && this.el.forcePureTank.checked);
+  }
+
+  get forcePureSea() {
+    return !!(this.el.forcePureSea && this.el.forcePureSea.checked);
   }
 
   // 按玩家选的身份切换仪表盘（坦克：装甲 + 弹夹；飞机：油门 + 机炮 + 高度）

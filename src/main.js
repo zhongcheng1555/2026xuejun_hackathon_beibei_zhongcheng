@@ -10,6 +10,7 @@ import { BulletManager } from './bullet.js';
 import { PlaneManager } from './plane.js';
 import { ScoutManager } from './scout.js';
 import { Tank } from './tank.js';
+import { Boat, waterSpawns } from './boat.js';
 import { TankAI } from './ai.js';
 import { Input } from './input.js';
 import { HUD } from './hud.js';
@@ -471,7 +472,7 @@ export class Game {
   // ---------- 战斗流程 ----------
 
   start(side) {
-    this.playerSide = side === 'plane' ? 'plane' : 'tank';
+    this.playerSide = side === 'plane' ? 'plane' : side === 'boat' ? 'boat' : 'tank';
     this.audio.init();   // 浏览器要求音频由用户操作启动，点按钮正好是那次操作
     this.audio.setBattleActive(true);   // 战斗音效开闸
     this.music.stop();   // 开打了：开场曲停掉，把耳朵让给战场
@@ -492,13 +493,21 @@ export class Game {
     this.lastContact = { ally: null, enemy: null };
     this.tankNameCounter = 0;   // 每局都从「坦克1」重新编号，不会越打越大
 
+    // 海战：开炮艇 = 海战（右下角的"必出纯海战"也能直接进）。
+    // 地形强制换成海 —— 不然船上没水可跑
+    this.pureSea = this.playerSide === 'boat' || !!this.hud.forcePureSea;
+    if (this.pureSea) this.playerSide = 'boat';
+
     // 每局重新抽一种地形：地貌、大小、能见度、掩体密度全换
     // 另外有 10% 概率赶上夜战（任何地形都可能入夜）
     this.night = Math.random() < CONFIG.night.chance;
     // 菜单右下角「自定义地图」勾了地形就只在这几种里抽；没勾（默认）还是全随机
     const pool = this.hud && this.hud.biomePool ? this.hud.biomePool : [];
     const picked = pool.map((id) => BIOMES.find((b) => b.id === id)).filter(Boolean);
-    const list = picked.length ? picked : BIOMES;   // 没勾 / 勾的都不认识 → 全随机
+    const seaBiome = BIOMES.find((b) => b.id === 'sea');
+    const list = this.pureSea
+      ? [seaBiome].filter(Boolean)
+      : picked.length ? picked : BIOMES;   // 没勾 / 勾的都不认识 → 全随机
     this.currentBiome = list[randInt(0, list.length - 1)];
     this._buildTerrain(this.currentBiome);
     this.treads.reset(this.terrain);
@@ -512,9 +521,12 @@ export class Game {
     const forceAir = !!(this.hud.forcePureAir || this.hud.forcePureTank);
     const forceGround = !!this.hud.forcePureGround;
     const forceTank = !!this.hud.forcePureTank;
-    const tankIsPlayer = this.playerSide === 'tank';
+    const tankIsPlayer = this.playerSide !== 'plane';
     let pureGround = false;
-    if (forceAir) {
+    if (this.pureSea) {
+      // 海战：天上不出飞机、地上不出坦克，只有船（所以这两条抽签全跳过）
+      this.pureAir = false;
+    } else if (forceAir) {
       this.pureAir = true;
     } else if (forceGround && tankIsPlayer) {
       // 纯陆战是"你开坦克"的玩法，开飞机时勾了它也没意义（总不能天上一个飞机都没有
@@ -548,15 +560,15 @@ export class Game {
 
     if (this.pureAir) {
       this.planes.configure(CONFIG.mode.pureAirPerSide, CONFIG.mode.pureAirPerSide, true);
-    } else if (this.pureGround) {
-      this.planes.configure(0, 0, false);         // 纯陆战：两边空军都不上场
+    } else if (this.pureGround || this.pureSea) {
+      this.planes.configure(0, 0, false);         // 纯陆战 / 海战：两边空军都不上场
     } else {
       this.planes.configure(null, null, false);   // 常规局：飞机全上，打一架少一架
     }
     this.planes.reset();
     // 纯空战和纯陆战都不派侦察兵 —— 主打一个"盲战"：
     // 没有侦察兵替你摸底，敌人在哪得自己找（常规局照常派）
-    this.scouts.setCount(this.pureAir || this.pureGround ? 0 : CONFIG.scout.count);
+    this.scouts.setCount(this.pureAir || this.pureGround || this.pureSea ? 0 : CONFIG.scout.count);
     this.scouts.reset();
     this.aimLine.terrain = this.terrain;
 
@@ -585,6 +597,10 @@ export class Game {
     if (this.pureAir) {
       this.allyTotal = this.pureAirAllyTank ? 1 : 0;
       this.enemyTotal = this.pureAirEnemyTank ? 1 : 0;
+    } else if (this.pureSea) {
+      // 海战：两边各 perTeam 条船（玩家开的那条算我方一条，凑满就行）
+      this.allyTotal = CONFIG.boat.perTeam;
+      this.enemyTotal = CONFIG.boat.perTeam;
     } else {
       const aiAlly = randInt(CONFIG.battle.allyMin, CONFIG.battle.allyMax);
       this.allyTotal = this.playerSide === 'tank' ? aiAlly + 1 : aiAlly;
@@ -598,7 +614,19 @@ export class Game {
     this.player = null;
     this.playerPlane = null;
     this.edgeWarnTimer = 0;
-    if (this.pureAir && this.playerSide === 'tank') {
+    if (this.pureSea) {
+      // 海战：只有船。你在西边、敌人在东边，隔着整片海面互相找
+      const spawns = waterSpawns(this.terrain, TEAM.ALLY, CONFIG.boat.perTeam);
+      this.player = this._spawnBoat(TEAM.ALLY, spawns[0], 0, true);
+      this.lookYaw = 0;
+      this.lookPitch = CONFIG.camera.defaultPitch;
+      this.followYaw = this.player.yaw;
+      this.camYaw = this.followYaw;
+      this.camPitch = this.lookPitch;
+      for (let i = 1; i < CONFIG.boat.perTeam; i++) {
+        this._spawnBoat(TEAM.ALLY, spawns[i], 0, false);
+      }
+    } else if (this.pureAir && this.playerSide === 'tank') {
       // 你就是"空战里那辆坦克"：地面只有你一辆，天上两边各 2 架 AI 飞机在打。
       // 你比天上的飞机硬得多（能修车），代价是那 20 秒一炮
       const playerSpawn = this._findSpawn(TEAM.ALLY, 30);
@@ -644,6 +672,13 @@ export class Game {
       this.camPitch = 0;
     }
 
+    if (this.pureSea) {
+      // 敌方那几条船（我方在上面已经放好了）
+      const es = waterSpawns(this.terrain, TEAM.ENEMY, this.enemyTotal);
+      for (let i = 0; i < this.enemyTotal; i++) {
+        this._spawnBoat(TEAM.ENEMY, es[i], Math.PI, false);
+      }
+    }
     // 地面部队：纯空战里两边各最多一辆（你开坦克的话，我方那辆已经是你了，这儿不再放）
     if (this.pureAir) {
       if (this.pureAirAllyTank && !tankIsPlayer) {
@@ -654,7 +689,8 @@ export class Game {
         const p = this._findSpawn(TEAM.ENEMY, 22);
         this._slowFireTank(this._spawnTank(TEAM.ENEMY, p, Math.PI + rand(-0.5, 0.5), false));
       }
-    } else {
+    } else if (!this.pureSea) {
+      // 海战里一个坦克都不放（上面放的是船）
       for (let i = 0; i < this.enemyTotal; i++) {
         const p = this._findSpawn(TEAM.ENEMY, 22);
         this._spawnTank(TEAM.ENEMY, p, Math.PI + rand(-0.5, 0.5), false);
@@ -665,11 +701,18 @@ export class Game {
     this.state = 'playing';
     this.updateCounts();
     this.hud.stopSpectating();
-    if (this.playerSide === 'tank') {
+    if (this.playerSide !== 'plane') {
       this.hud.setPlayer(this.player);
       this.hud.setMode(this.player.precise);
     }
-    if (this.pureAir) {
+    if (this.pureSea) {
+      this.hud.banner(
+        '海战',
+        `地形：${this.currentBiome.name} · 双方各 ${CONFIG.boat.perTeam} 艘炮艇 · 船开不上岸，只能在水里绕` +
+          (this.night ? ' · 夜战' : ''),
+        3
+      );
+    } else if (this.pureAir) {
       // 那辆坦克归谁：你自己开的就是你，AI 开的说清楚是哪一边
       const tankBits = [];
       if (tankIsPlayer) tankBits.push(`你就是那辆坦克（${CONFIG.mode.pureAirTankReload} 秒一炮）`);
@@ -878,6 +921,19 @@ export class Game {
       this.ais.push(ai);
     }
     return tank;
+  }
+
+  // 炮艇：和坦克走同一套"实体 + AI"流程，所以坦克AI 直接就能开它
+  _spawnBoat(team, position, yaw, isPlayer) {
+    const name = isPlayer ? '你' : `炮艇${++this.tankNameCounter}`;
+    const boat = new Boat(this, { team, position, yaw, isPlayer, name });
+    this.tanks.push(boat);
+    if (!isPlayer) {
+      const ai = new TankAI(boat, this);
+      boat.ai = ai;
+      this.ais.push(ai);
+    }
+    return boat;
   }
 
   // 纯空战里那辆坦克 20 秒才能打一炮：弹夹压成 1 发、装填拉长。

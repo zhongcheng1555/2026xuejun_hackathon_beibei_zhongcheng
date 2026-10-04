@@ -17,6 +17,8 @@ export class Tank {
     this.world = world;
     this.team = opts.team;
     this.isPlayer = !!opts.isPlayer;
+    // 水里的载具（炮艇）：深水不是墙，反而是它唯一能跑的地方（见 boat.js）
+    this.ignoreWater = !!opts.ignoreWater;
     this.id = idCounter++;
     this.name = opts.name || `坦克${this.id}`;
 
@@ -25,6 +27,13 @@ export class Tank {
     this.radius = CONFIG.tank.radius;
     this.alive = true;
     this.kills = 0;
+    // 行驶参数：坦克用这套默认值，炮艇之类的子类在构造函数里覆盖（见 boat.js）
+    this.speed = CONFIG.tank.speed;
+    this.aiSpeed = CONFIG.tank.aiSpeed;
+    this.turnSpeed = CONFIG.tank.turnSpeed;
+    this.playerTurnSpeed = CONFIG.tank.playerTurnSpeed;
+    this.draft = CONFIG.tank.waterDraft;   // 浮在水里时沉下去多少
+    this.barrelBaseY = 2.97;               // 炮塔枢轴离地多高（炮管避障用）
 
     this.yaw = opts.yaw ?? rand(0, Math.PI * 2);
     this.turretYaw = this.yaw;
@@ -242,7 +251,7 @@ export class Tank {
     const dx = Math.sin(this.turretYaw) * cp;
     const dy = Math.sin(this.turretPitch);
     const dz = Math.cos(this.turretYaw) * cp;
-    const baseY = this.pos.y + 2.97;
+    const baseY = this.pos.y + this.barrelBaseY;
     let d = maxD;
     // 0.8 米一步往外走，撞上就退半步。起点 2.6 —— 车体半径 3.4 以内不可能有障碍物
     for (let s = 2.6; s < maxD; s += 0.8) {
@@ -496,10 +505,10 @@ export class Tank {
 
     if (isPlayer) {
       // 坦克开法：A/D 原地转车体（停下来也能原地掉头），W/S 沿车头方向前进/后退
-      this.yaw = wrapAngle(this.yaw - this.controlTurn * CONFIG.tank.playerTurnSpeed * dt);
+      this.yaw = wrapAngle(this.yaw - this.controlTurn * this.playerTurnSpeed * dt);
       const fwd = this.controlForward;
       if (fwd !== 0) {
-        speed = fwd > 0 ? CONFIG.tank.speed : CONFIG.tank.speed * CONFIG.tank.reverseSpeed;
+        speed = fwd > 0 ? this.speed : this.speed * CONFIG.tank.reverseSpeed;
         if (this.precise) speed *= this.aimSpeedMul;  // 瞄准模式走得很慢（追飞机时例外）
         const sign = fwd > 0 ? 1 : -1;
         dirX = Math.sin(this.yaw) * sign;
@@ -509,7 +518,7 @@ export class Tank {
       // AI 倒车：不转头，直接沿车尾方向退。
       // 掉头要 1.65 秒，泡在岩浆里被石头顶住的时候等不起那么久 —— 直着退最快。
       const mag = Math.min(1, this.moveIntent.length());
-      speed = CONFIG.tank.aiSpeed * mag * CONFIG.tank.reverseSpeed;
+      speed = this.aiSpeed * mag * CONFIG.tank.reverseSpeed;
       dirX = -Math.sin(this.yaw);
       dirZ = -Math.cos(this.yaw);
     } else {
@@ -517,9 +526,9 @@ export class Tank {
       const mag = Math.min(1, this.moveIntent.length());
       if (mag > 0.05) {
         const targetYaw = Math.atan2(this.moveIntent.x, this.moveIntent.z);
-        this.yaw = turnTowards(this.yaw, targetYaw, CONFIG.tank.turnSpeed * dt);
+        this.yaw = turnTowards(this.yaw, targetYaw, this.turnSpeed * dt);
         const align = Math.cos(wrapAngle(targetYaw - this.yaw));
-        speed = CONFIG.tank.aiSpeed * mag * clamp(align, 0.2, 1);
+        speed = this.aiSpeed * mag * clamp(align, 0.2, 1);
         if (this.precise) speed *= this.aimSpeedMul;  // AI 进瞄准模式也会变慢（追飞机时例外）
         dirX = Math.sin(this.yaw);
         dirZ = Math.cos(this.yaw);
@@ -541,10 +550,10 @@ export class Tank {
     this.blockPush.x = 0;
     this.blockPush.z = 0;
     this.blockPush.hit = false;
-    this.world.terrain.resolveCircle(this.pos, this.radius, this.blockPush);
+    this.world.terrain.resolveCircle(this.pos, this.radius, this.blockPush, this.ignoreWater);
     this._separateFromOtherTanks();
     // 互相推开之后可能又被挤进墙里（迷宫这种窄通道很容易），再解一次障碍
-    this.world.terrain.resolveCircle(this.pos, this.radius, this.blockPush);
+    this.world.terrain.resolveCircle(this.pos, this.radius, this.blockPush, this.ignoreWater);
     // 记下这一帧总共被障碍推了多少（AI 用它来判断"我正贴着哪面墙"）
     if (this.blockPush.hit) {
       const pl = Math.hypot(this.blockPush.x, this.blockPush.z) || 1;
@@ -573,7 +582,7 @@ export class Tank {
     const t2 = this.world.terrain;
     const level = t2.waterLevelAt ? t2.waterLevelAt(this.pos.x, this.pos.z) : null;
     const floating = level !== null && level > groundY;
-    this.pos.y = floating ? level - CONFIG.tank.waterDraft : groundY;
+    this.pos.y = floating ? level - this.draft : groundY;
 
     // 岩浆里会持续被烧（别的地形上这个值恒为 0）
     const burn = this.world.terrain.hazardAt(this.pos.x, this.pos.z);
