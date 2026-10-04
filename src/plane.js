@@ -163,6 +163,7 @@ export class Plane {
     this.lossSide = 0;
     this.lossTimer = 0;
     this.sink = 0;
+    this.fallTarget = null;
     this.burnTimer = 0;
     for (const s of this.skin) s.mesh.material = s.mat;   // 复活的飞机要恢复涂装，不能还是黑壳
     this.state = 'cruise';
@@ -475,8 +476,14 @@ export class Plane {
         }
       }
 
-      // 每秒 5% 的概率挑一个地面目标俯冲
-      if (Math.random() < CONFIG.plane.diveChance * dt) {
+      // 挑一个地面目标俯冲。平时是"每秒 5% 的概率"，掷不到就继续巡航。
+      //
+      // 但纯空战里天上已经没有对手时不能还靠掷骰子：场上往往还有敌方的地面部队
+      // （纯空战里你开的那辆坦克、或者随机出的那几辆），此时 AI 飞机会一直绕圈巡航，
+      // 只有 5%/秒 的概率才想起来去俯冲一次 —— 玩家看到的就是
+      // "两架飞机一直在盘旋，没有一个主动开始"。所以天空一空就直接压下去打
+      const noAirFoe = this.world.pureAir && !this._findAirTarget();
+      if (Math.random() < (noAirFoe ? 1 : CONFIG.plane.diveChance) * dt) {
         const target = this._pickTarget();
         if (target) {
           this.target = target;
@@ -764,6 +771,10 @@ export class Plane {
     this.landed = false;
     this.fallVel = this.vel.clone().multiplyScalar(0.3);
     this.fallSpin = rand(-3.5, 3.5);
+    // 坠落途中还能开火：给残骸留半梭子（打完要歇着补弹，见 _fallCombat）
+    this.burst = randInt(CONFIG.plane.burst[0], CONFIG.plane.burst[1]);
+    this.fireTimer = 0.35;
+    this.fallTarget = null;                   // 要砸的那辆敌车（_diveAtTank 每帧更新）
     this.smokeTimer = 0;
     this._char();                             // 机身立刻变黑
     this.world.effects.explosion(this.pos.clone(), 1.2);
@@ -795,10 +806,13 @@ export class Plane {
 
     if (!this.fallVel) this.fallVel = new THREE.Vector3();
     this.fallVel.y -= 26 * dt;
-    // 死也要拉一个：一边掉一边朝最近的坦克扎过去
+    // 死也要拉一个：一边掉一边朝最近的**敌**车扎过去
     this._diveAtTank(dt);
     this.pos.addScaledVector(this.fallVel, dt);
-    this.object.rotation.z += (this.fallSpin || 0) * dt;
+    // 打转改成绕机身自转（roll）：这样"机头掰过去打谁"和"打转"能同时存在
+    this.object.rotateZ((this.fallSpin || 0) * dt);
+    // 坠落途中照样开炮：天上有敌机就打敌机，没有就打我正砸着的那辆敌车
+    this._fallCombat(dt);
 
     this.smokeTimer -= dt;
     if (this.smokeTimer <= 0) {
@@ -817,13 +831,19 @@ export class Plane {
     }
   }
 
-  // 坠落中朝最近的坦克做水平引导（带限速）。
-  // 不这么做的话，坠机砸坦克全靠运气，几乎永远砸不到 —— 那就等于没这个玩法。
+  // 坠落时的水平引导（带限速）：先挑一辆**敌**车扎过去。
+  // 不这么做的话坠机砸坦克全靠运气，几乎永远砸不到，等于没这个玩法。
+  // 注意只能砸敌人 —— 原来这里挑的是"最近的坦克"、不分敌我，
+  // 断翼的飞机会一头扎在自己队友头上，比摔了还难看
   _diveAtTank(dt) {
+    const cfg = CONFIG.plane;
+    const a = cfg.wreckDiveAccel;
+    let gx = 0;
+    let gz = 0;
     let best = null;
     let bestD = Infinity;
     for (const t of this.world.tanks) {
-      if (!t.alive) continue;
+      if (!t.alive || t.team === this.team) continue;
       const ddx = t.pos.x - this.pos.x;
       const ddz = t.pos.z - this.pos.z;
       const d2 = ddx * ddx + ddz * ddz;
@@ -832,23 +852,85 @@ export class Plane {
         best = t;
       }
     }
-    if (!best) return;
-    const dx = best.pos.x - this.pos.x;
-    const dz = best.pos.z - this.pos.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 0.5) return;
-
-    const a = CONFIG.plane.wreckDiveAccel;
-    this.fallVel.x += (dx / d) * a * dt;
-    this.fallVel.z += (dz / d) * a * dt;
+    this.fallTarget = best;
+    if (best) {
+      const d = Math.sqrt(bestD);
+      if (d > 0.5) {
+        gx = (best.pos.x - this.pos.x) / d;
+        gz = (best.pos.z - this.pos.z) / d;
+      }
+    } else {
+      // 附近没有敌车：至少躲开自己人 —— 绝不砸在队友头上
+      for (const t of this.world.tanks) {
+        if (!t.alive || t.team !== this.team) continue;
+        const dx = t.pos.x - this.pos.x;
+        const dz = t.pos.z - this.pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d > cfg.wreckAvoidMate || d < 0.5) continue;
+        gx -= dx / d;
+        gz -= dz / d;
+      }
+      const len = Math.hypot(gx, gz);
+      if (len < 0.001) return;     // 四面八方都是自己人（或者一个都没有）：那就直着掉
+      gx /= len;
+      gz /= len;
+    }
+    this.fallVel.x += gx * a * dt;
+    this.fallVel.z += gz * a * dt;
 
     // 限速：不然越追越快，残骸会横着飞出去老远
-    const max = CONFIG.plane.wreckDiveMax;
+    const max = cfg.wreckDiveMax;
     const hs = Math.hypot(this.fallVel.x, this.fallVel.z);
     if (hs > max) {
       const k = max / hs;
       this.fallVel.x *= k;
       this.fallVel.z *= k;
+    }
+  }
+
+  // 坠落途中天上的敌机里，挑一个最近的（**不卡高度差**：
+  // 已经在往下掉了，高度带一卡就永远选不到人）
+  _fallAirTarget() {
+    const range = CONFIG.plane.fallAirRange;
+    let best = null;
+    let bestD = Infinity;
+    for (const p of this.world.planes.list) {
+      if (!p.alive || p === this || p.team === this.team) continue;
+      const d = this.pos.distanceTo(p.pos);
+      if (d > range || d < 3) continue;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  // 坠落途中照样开炮：反正已经要摔了，能拉一个是一个。
+  // ① 天上有敌机 → 机头掰过去打（把最后一次机会用掉）
+  // ② 没有 → 打我正在砸下去的那辆敌车
+  _fallCombat(dt) {
+    const cfg = CONFIG.plane;
+    const air = this._fallAirTarget();
+    const t = air || (this.fallTarget && this.fallTarget.alive ? this.fallTarget : null);
+    if (!t || !t.alive) return;
+    _toTarget.copy(t.pos).sub(this.pos);
+    const dist = _toTarget.length();
+    if (dist > (air ? cfg.fallAirRange : cfg.airRange) || dist < 3) return;
+    _fireDir.copy(_toTarget).normalize();
+    // 机头（连机身）掰向目标：坠落时舵面几乎失效，这是"尽力而为"
+    this.object.quaternion.setFromUnitVectors(FORWARD, _fireDir);
+    this.fireTimer -= dt;
+    if (this.fireTimer <= 0 && this.burst > 0) {
+      _nose.copy(this.pos);
+      this._fire(_nose, _fireDir, air ? CONFIG.plane.airHitSigma : cfg.hitSigma, cfg.gunDamage);
+      this.fireTimer = cfg.gunInterval;
+      this.burst--;
+      if (this.burst <= 0) {
+        // 打空一轮也要歇着补弹（不能变成无限机枪）
+        this.burst = randInt(CONFIG.plane.burst[0], CONFIG.plane.burst[1]);
+        this.fireTimer = rand(cfg.groundBurstPause[0], cfg.groundBurstPause[1]);
+      }
     }
   }
 

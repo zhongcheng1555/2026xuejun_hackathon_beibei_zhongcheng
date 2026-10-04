@@ -120,7 +120,22 @@ export class TankAI {
       : rand(n.blindEvery[0], n.blindEvery[1]);
   }
 
-  // 手边最近的敌方侦察兵（狩猎范围内）。
+  // 这个敌方侦察兵是不是已经有别的**友军坦克**在打了。
+  // 侦察兵只有一滴血、又小又快，一堆坦克挤过去追同一个既浪费人手，
+  // 又容易在它旁边互相打到自家车 —— 所以谁先盯上就算谁的，别抢
+  _scoutTaken(s) {
+    const ais = this.world.ais;
+    if (!ais) return false;
+    for (const other of ais) {
+      if (other === this) continue;
+      if (!other.tank || !other.tank.alive) continue;
+      if (other.tank.team !== this.tank.team) continue;
+      if (other.target === s) return true;
+    }
+    return false;
+  }
+
+  // 手边最近的敌方侦察兵（狩猎范围内），**而且是还没有人认领的**。
   // 侦察兵会一直补人，所以这活儿永远不会断 —— 坦克闲着的时候不至于干站着
   _findFoeScout() {
     const list = this.world.scouts && this.world.scouts.list;
@@ -130,6 +145,7 @@ export class TankAI {
     let bestD = Infinity;
     for (const s of list) {
       if (!s.alive || s.team === tank.team) continue;
+      if (this._scoutTaken(s)) continue;          // 已经有人去了，别一窝蜂
       const d = Math.hypot(s.pos.x - tank.pos.x, s.pos.z - tank.pos.z);
       if (d < bestD && d <= CONFIG.ai.scoutHuntRange) {
         bestD = d;
@@ -214,6 +230,13 @@ export class TankAI {
     this.aimOffset.lerp(this.aimOffsetTarget, 1 - Math.exp(-2.2 * dt));
   }
 
+  // 射线上有没有自己人（有就收手，绝不故意朝友军开火）
+  //
+  // 这里有两个原先漏掉的口子，都是"走廊里排队"时最容易出事的：
+  //  1) 原来把 4m 以内的友军**排除**在外。可坦克半径就有 3.4m、炮管长 7.4m ——
+  //     贴着正前方 3m 站着的那个，开炮等于把炮口怼在人家脸上，却是最危险的
+  //  2) 原来只看到"目标距离"为止。炮弹是带散布的，打偏了会从目标头顶飞过去，
+  //     目标背后一小段里站着自己人一样会挨
   _friendlyInLine(ux, uz, targetDist) {
     const tank = this.tank;
     for (const f of this.world.tanks) {
@@ -221,9 +244,9 @@ export class TankAI {
       const dx = f.pos.x - tank.pos.x;
       const dz = f.pos.z - tank.pos.z;
       const d = Math.hypot(dx, dz);
-      if (d < 4 || d > targetDist) continue;
-      const dot = (dx * ux + dz * uz) / d;
-      if (dot > 0.94) return true; // 夹角约 20° 内，算挡在射线上
+      if (d > targetDist + CONFIG.ai.allyLineBehind) continue;
+      const dot = (dx * ux + dz * uz) / (d || 1);
+      if (dot > 0.9) return true; // 夹角约 25° 内，算挡在射线上
     }
     return false;
   }
@@ -277,20 +300,43 @@ export class TankAI {
         tank.setMoveIntent(Math.sin(tank.yaw), Math.cos(tank.yaw), 1);
         return;   // 倒车时不走贴墙滑行：就是要一条直线退出去
       }
-      const cx = t.streamCenterX(tank.pos.z);
-      const mySide = tank.pos.x >= cx ? 1 : -1;
-      let dir = mySide;
-      const tgt = this.target;
-      if (tgt && tgt.pos) {
-        // 注意：两边都用"我这里"的河道中线当参照。河是弯的，
-        // 各算各的中线会让"哪一边"来回跳，坦克就会在河岸上原地打摆子
-        const foeSide = tgt.pos.x >= cx ? 1 : -1;
-        if (foeSide !== mySide) dir = foeSide;
+      // 危险区分两种：岩浆河（一条带子）和**火山喷发的火**（从火山口往外铺的一片）。
+      // 原来这里只会按"我在河的哪一边"来躲，直接调 streamCenterX ——
+      // 可火山那张图有 5% 的概率根本不生成岩浆河，那时候 stream 是 null，
+      // 而且火一样会让 hazardAt > 0，于是每帧抛一次
+      // "Cannot read properties of null (reading 'baseX')"，整个 AI 全停。
+      // 所以要按"到底是什么在烧我"分开处理
+      const inFire = t.inFire ? t.inFire(tank.pos.x, tank.pos.z) : false;
+      if (inFire && t.volcano) {
+        // 火是圆的：方向就是"背离火山口"，一直往外走
+        const dx = tank.pos.x - t.volcano.x;
+        const dz = tank.pos.z - t.volcano.z;
+        const len = Math.hypot(dx, dz) || 1;
+        ax = dx / len;
+        az = dz / len;
+        mag = 1;
+      } else if (t.stream) {
+        const cx = t.streamCenterX(tank.pos.z);
+        const mySide = tank.pos.x >= cx ? 1 : -1;
+        let dir = mySide;
+        const tgt = this.target;
+        if (tgt && tgt.pos) {
+          // 注意：两边都用"我这里"的河道中线当参照。河是弯的，
+          // 各算各的中线会让"哪一边"来回跳，坦克就会在河岸上原地打摆子
+          const foeSide = tgt.pos.x >= cx ? 1 : -1;
+          if (foeSide !== mySide) dir = foeSide;
+        }
+        // 这里不看 unstick：泡在岩浆里只有一个目标 —— 上岸
+        ax = dir;
+        az = 0;
+        mag = 1;
+      } else {
+        // 兜底：既没有河也没有火山（理论上不该发生），往场地中间退
+        const len = Math.hypot(tank.pos.x, tank.pos.z) || 1;
+        ax = -tank.pos.x / len;
+        az = -tank.pos.z / len;
+        mag = 1;
       }
-      // 这里不看 unstick：泡在岩浆里只有一个目标 —— 上岸
-      ax = dir;
-      az = 0;
-      mag = 1;
     } else if (t.stream && t.stream.damage > 0 && this._crossingInto(t, ax, az)) {
       // 下水**之前**先看一眼（别等泡进去了才想办法）：
       //   · 目标不在对岸 → 没理由下水，沿着岸边走
@@ -536,9 +582,12 @@ export class TankAI {
       }
     }
 
+    // 身上有伤、这一带又够安全 → 先停下来修车（不必等"周围一个人都没有"）。
+    // 注意不能只挂在下面的"没目标"分支里：视野 200m 之内几乎总有敌人，
+    // 坦克就几乎永远有目标，那样它一辈子都不会去修车
+    if (this._tryRepair()) return;
+
     if (!this.target) {
-      // 没敌人、身上又有伤 → 停下来应急修复（和玩家同一套规则）
-      if (this._tryRepair()) return;
       // 闲着也是闲着：把敌方侦察兵清掉（它们会一直补人，所以总有活干）。
       // 放在修车之后 —— 有伤先修，别为了追个侦察兵把自己搭进去
       const scout = this._findFoeScout();
@@ -549,7 +598,6 @@ export class TankAI {
       }
       this.target = scout;
     }
-    this.healing = false;   // 有敌人了就不修了
 
     // 打飞机：它飞得快，追是追不上的，所以边按巡逻路线走边朝天打。
     // 平时大家都忙着打地面目标，只有手头没活儿的（以及残局里剩下来的）才会抬头。
@@ -617,7 +665,45 @@ export class TankAI {
     return best;
   }
 
-  // 残血又暂时安全时停下来修车；返回 true 表示这一帧在修车，别干别的
+  // 这一带够不够安全，能停下来修车？
+  // 原来要求"最近的敌人远在 120 米外"才敢动手 —— 实战里几乎永远不满足，
+  // 所以坦克看着就像从来不修车。现在改成两条：
+  //   ① 附近一个敌人都没有 → 安心修（"附近没敌人就能修"）
+  //   ② 附近自己人明显比敌人多、而且最近的敌人还没贴脸 → 缩在队友后面修
+  _safeToRepair() {
+    const tank = this.tank;
+    const R = CONFIG.ai.repairSafeRange;
+    let foes = 0;
+    let mates = 0;
+    let nearestFoe = Infinity;
+    for (const t of this.world.tanks) {
+      if (!t.alive || t === tank) continue;
+      const d = Math.hypot(t.pos.x - tank.pos.x, t.pos.z - tank.pos.z);
+      if (d > R) continue;
+      if (t.team === tank.team) {
+        mates++;
+        continue;
+      }
+      foes++;
+      if (d < nearestFoe) nearestFoe = d;
+    }
+    // 飞机也算威胁：坦克打不着它，但它会俯冲扫射
+    const pl = this.world.planes && this.world.planes.list;
+    if (pl) {
+      for (const p of pl) {
+        if (!p.alive || p.team === tank.team) continue;
+        const d = Math.hypot(p.pos.x - tank.pos.x, p.pos.z - tank.pos.z);
+        if (d <= R) {
+          foes++;
+          if (d < nearestFoe) nearestFoe = d;
+        }
+      }
+    }
+    if (foes === 0) return true;
+    return mates >= foes * CONFIG.ai.repairMateRatio && nearestFoe > CONFIG.ai.repairFoeDist;
+  }
+
+  // 身上有伤、这一带又够安全时停下来修车；返回 true 表示这一帧在修车，别干别的
   _tryRepair() {
     const tank = this.tank;
     if (tank.health >= tank.repairCeiling - 6) {
@@ -629,8 +715,7 @@ export class TankAI {
       this.healing = false;
       return false;
     }
-    // 敌人逼近就放弃修复跑路
-    if (this._nearestFoeDist() < CONFIG.ai.engageMax * 0.6) {
+    if (!this._safeToRepair()) {
       if (tank.repairing) tank.cancelRepair();
       this.healing = false;
       return false;
@@ -643,13 +728,70 @@ export class TankAI {
       return false;
     }
     if (!this.healing) {
-      if (this._nearestFoeDist() > CONFIG.ai.viewRange * 0.6) this.healing = tank.startRepair();
+      this.healing = tank.startRepair();
       if (!this.healing) return false;
     }
     // 一定要先站住：修复期间一动就中断，顺序反了会变成每帧重启
     tank.setMoveIntent(0, 0, 0);
     tank.precise = true;
     return true;
+  }
+
+  // 战斗时别站在友军的炮口正前方。
+  // _friendlyInLine 只在**开炮前**收手，管的是"我瞄的时候你正好在弹道上"；
+  // 可现实里更容易出事的是反过来 —— 自己开车怼进了友军的弹道，
+  // 人家炮弹已经飞出去了，我再让开也来不及。
+  // 所以这里在走位上主动给一个横向偏移，把自己从别人的车道上挪出去。
+  _dodgeAllyLine(mx, mz) {
+    const tank = this.tank;
+    let ax = 0;
+    let az = 0;
+    const gap = CONFIG.ai.allyLineGap;
+    for (const f of this.world.tanks) {
+      if (f === tank || !f.alive || f.team !== tank.team) continue;
+      const fai = f.ai;
+      // 只有"正在交火"的友军才算：没目标的在巡逻，它的炮口方向不算数，
+      // 否则满场都是要躲的车道，谁都走不动
+      if (!fai || !fai.target || !fai.target.alive) continue;
+      const fdx = fai.target.pos.x - f.pos.x;
+      const fdz = fai.target.pos.z - f.pos.z;
+      const flen = Math.hypot(fdx, fdz);
+      if (flen < 1) continue;
+      const fuX = fdx / flen;
+      const fuZ = fdz / flen;
+      const rx = tank.pos.x - f.pos.x;
+      const rz = tank.pos.z - f.pos.z;
+      const proj = rx * fuX + rz * fuZ;
+      // 我在它身后、或者已经越过它的目标 —— 都不算挡着
+      if (proj <= 0 || proj >= flen) continue;
+      const perpX = rx - fuX * proj;
+      const perpZ = rz - fuZ * proj;
+      const perp = Math.hypot(perpX, perpZ);
+      if (perp >= gap) continue;
+      let nx;
+      let nz;
+      if (perp > 0.4) {
+        // 往"离弹道更远"的那一侧挪
+        nx = perpX / perp;
+        nz = perpZ / perp;
+      } else {
+        // 正好踩在弹道上（横向几乎为 0）：按车号分左右，
+        // 免得两辆车同时选同一侧、又撞在一起
+        const s = tank.id % 2 ? 1 : -1;
+        nx = -fuZ * s;
+        nz = fuX * s;
+      }
+      const k = 1 - perp / gap;    // 越贴近弹道，推得越急
+      // 乘 (1+k)：贴着弹道时（k→1）力度翻倍，能压过原本的战术机动（横移/推进），
+      // 快让到位时（k→0）又把控制权交还给战术机动。不然力度恒定的话，
+      // 战术机动一直把人往回拽，最后只在弹道边上磨 2~3 米，等于没让开
+      const push = CONFIG.ai.allyLinePush * (1 + k);
+      ax += nx * push;
+      az += nz * push;
+    }
+    if (ax === 0 && az === 0) return [mx, mz];
+    // 只做"侧向偏一点"，不该盖过原来的战术机动（前进/后退/绕行还得照做）
+    return [mx + ax, mz + az];
   }
 
   _patrol(dt) {
@@ -710,6 +852,18 @@ export class TankAI {
 
     let mx;
     let mz;
+    // 打侦察兵：直接**碾过去**。
+    // 它只有一滴血、又小又快，跟它保持交火距离毫无意义 ——
+    // 原来这里套的是打坦克那套（一进 engageMin 就往后倒），结果永远碰不到它，
+    // 只能在 30 多米外干耗；而坦克比它快（12.5 vs 8.5），是追得上的。
+    // 追的路上照样开炮（_aimAndFire 在后面统一处理），
+    // 要是友军正好挡在弹道上、炮不能开，那就更该压过去
+    if (t.isScout && CONFIG.ai.ramScouts) {
+      const dodgeScout = this._dodgeAllyLine(ux, uz);
+      const [ix, iz] = this._keepInside(dodgeScout[0], dodgeScout[1]);
+      this._move(ix, iz, 1);
+      return;
+    }
     if (dist > CONFIG.ai.engageMax) {
       mx = ux;
       mz = uz;
@@ -731,7 +885,9 @@ export class TankAI {
       mx = -ux;
       mz = -uz;
     }
-    const [ix, iz] = this._keepInside(mx, mz);
+    // 最后再让开车道：别顶在友军的炮口正前方（不然人家一开炮就打到自己人）
+    const dodge = this._dodgeAllyLine(mx, mz);
+    const [ix, iz] = this._keepInside(dodge[0], dodge[1]);
     this._move(ix, iz, 0.95);
   }
 

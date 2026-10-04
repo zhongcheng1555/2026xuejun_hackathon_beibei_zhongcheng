@@ -639,19 +639,11 @@ export class Game {
     if (!t.fireActive) {
       if (this.elapsed < v.eruptAt) return;
       t.startEruption();
-      // 真的喷出来：火山口当场炸开一大团，之后每隔一阵往外翻一次 ——
-      // 不是一个"提示你火山喷发了"的文字，是屏幕上真的在炸。
-      // 注意是**贴地铺开**（岩浆流），不是往天上炸到飞机高度 ——
-      // 飞机在 40~60m 上飞，火团只到地面附近几米，喷不到它
-      const cy = t.heightAt(t.volcano.x, t.volcano.z);
+      // 真的喷出来 —— 但不搞"特写"：不放喷发瞬间那一大团爆炸、也不弹居中横幅。
+      // 岩浆**贴地往外漫**本身就是喷发，玩家一眼就看得见，不需要再拿镜头/特效强调
       this.volcanoErupt = 0.45;
-      for (let k = 0; k < 6; k++) {
-        _point.set(t.volcano.x + rand(-14, 14), cy + rand(0.5, 5), t.volcano.z + rand(-14, 14));
-        this.effects.explosion(_point.clone(), 2.4);
-      }
       this.audio.explosion(new THREE.Vector3(t.volcano.x, 0, t.volcano.z), 1.6);
-      this.hud.banner('火山喷发', '岩浆正从火山口往外漫 —— 往外跑，别被圈住', 3);
-      this.hud.feed('火山喷发了！岩浆流一直在往外推，3 分半吞掉整个战场', 'danger');
+      this.hud.feed('火山喷发了！岩浆正在往外漫，3 分半吞掉整个战场', 'danger');
       this.volcanoFx = v.fxEvery;
       return;
     }
@@ -1128,7 +1120,8 @@ export class Game {
     return !!(this.player && this.player.isPlane);
   }
 
-  // 开飞机：鼠标/方向键定机头方向（准星指哪，机头就朝哪转），W/S 推油门，左键开炮
+  // 开飞机：鼠标/方向键定机头方向（准星指哪，机头就朝哪转），
+  // W/S 和 ↑/↓ 都是抬头/低头，左键开炮
   updatePlayerPlane(dt) {
     const pl = this.playerPlane;
     if (!pl || !pl.alive) return;
@@ -1139,9 +1132,12 @@ export class Game {
     if (md.x !== 0 || turn !== 0) {
       this.lookYaw = wrapAngle(this.lookYaw - md.x * cfg.sensitivity - turn * 1.5 * dt);
     }
-    if (md.y !== 0 || this.input.camPitchAdjust !== 0) {
+    // W/S 抬头低头（原来 W/S 推油门，玩家反馈说想要它管上下）；
+    // 和 ↑/↓ 是同一件事，只是键位更顺手
+    const pitchKey = this.input.forward + this.input.camPitchAdjust;
+    if (md.y !== 0 || pitchKey !== 0) {
       this.lookPitch = clamp(
-        this.lookPitch - md.y * cfg.sensitivity + this.input.camPitchAdjust * 0.9 * dt,
+        this.lookPitch - md.y * cfg.sensitivity + pitchKey * CONFIG.playerPlane.pitchKeyRate * dt,
         cfg.pitchMin,
         cfg.pitchMax
       );
@@ -1149,7 +1145,7 @@ export class Game {
 
     const cp = Math.cos(this.lookPitch);
     pl.aimDir.set(Math.sin(this.lookYaw) * cp, Math.sin(this.lookPitch), Math.cos(this.lookYaw) * cp).normalize();
-    pl.controlThrottle = this.input.forward;
+    pl.controlThrottle = 0;   // 油门自动巡航（推杆交给 W/S 做抬头低头了）
     const pressed = this.input.consumeFire();
     pl.controlFire = pressed || this.input.fireHeld;
     if (pressed) this.hud.crosshairKick();

@@ -95,10 +95,17 @@ export function rigPosition(camYaw, camPitch, focusPos, terrain, outPos, outDir,
   }
 
   // 隧道里：镜头必须压在岩顶下面。不压的话抬头那一档镜头会穿到岩顶上方，
-  // 屏幕上就只剩一片石头（山谷的隧道才有这种情况）
+  // 屏幕上就只剩一片石头（山谷的隧道才有这种情况）。
+  //
+  // 但**只有"被看的对象本身也在隧道里（在岩顶下沿以下）"时才压**。
+  // 这条判据之前漏了，结果飞机镜头也走同一个函数：飞机在 50m 高、
+  // 镜头拖在它后面，只要镜头位置正好落在某段隧道上方，就会被从 50m
+  // 一把压到 21m（岩顶下沿）—— 画面突然贴到地面，看着像"变成坦克了"，
+  // 飞过隧道口又弹回去。山谷的隧道盖住约 17% 地面，所以会时不时抽一下，
+  // 而且飞得越高掉得越狠
   if (terrain.roofBottomAt) {
     const rb = terrain.roofBottomAt(outPos.x, outPos.z);
-    if (rb !== null && outPos.y > rb - 0.6) outPos.y = rb - 0.6;
+    if (rb !== null && focusPos.y < rb && outPos.y > rb - 0.6) outPos.y = rb - 0.6;
   }
 
   // 相机永远看向前方的一点，这样准星方向就是玩家的视线方向
