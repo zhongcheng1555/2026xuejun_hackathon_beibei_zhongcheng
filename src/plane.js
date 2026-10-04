@@ -921,6 +921,9 @@ export class Plane {
   // ① 天上有敌机 → 机头掰过去打（把最后一次机会用掉）
   // ② 没有 → 打我正在砸下去的那辆敌车
   _fallCombat(dt) {
+    // 只有"断了翅膀、还在往下硬撑"的那架才在坠落里继续反击；
+    // 被一发打爆、机翼完好的那架，一死就哑火（玩家反馈：不该还补射）
+    if (this.wingLoss <= 0) return;
     const cfg = CONFIG.plane;
     const air = this._fallAirTarget();
     const t = air || (this.fallTarget && this.fallTarget.alive ? this.fallTarget : null);
