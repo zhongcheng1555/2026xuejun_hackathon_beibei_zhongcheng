@@ -190,8 +190,9 @@ export const CONFIG = {
     viewRange: 200,
     engageMin: 32,
     engageMax: 95,
-    aimError: 0.072,         // 常驻瞄准偏差（弧度，按距离换算成米）
-    aimErrorMoving: 0.09,    // 移动中额外偏差
+    engageHold: 52,          // 想保持的交火距离：比这远就往里压，比这近就往外散
+    aimError: 0.055,         // 常驻瞄准偏差（弧度，按距离换算成米）
+    aimErrorMoving: 0.045,   // 移动中额外偏差
     fireAngle: 0.07,         // 转到这个角度内才开火
     reaction: [0.8, 2.1],    // 发现目标后的反应延迟
     planeAimErrorMul: 2.2,   // AI 打飞机时瞄准误差放大倍数（对空最难，别让坦克把飞机当靶子打）

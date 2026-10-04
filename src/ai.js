@@ -871,13 +871,18 @@ export class TankAI {
       mx = -ux * 0.9;
       mz = -uz * 0.9;
     } else {
+      // 侧移躲避，但**同时朝"理想交火距离"收拢**：
+      // 比 engageHold 远就往里压，比它近就往外散。
+      // 原来这里在中间不管多远都只加一个固定的 +0.25 内偏，结果是
+      // 坦克在 32~95 这一大段里来回拐、既不靠近也不退开（玩家反馈"拐来拐去"）
       this.strafeTimer -= dt;
       if (this.strafeTimer <= 0) {
         this.strafeTimer = rand(1.6, 3.6);
         this.strafeSign *= -1;
       }
-      mx = -uz * this.strafeSign + ux * 0.25;
-      mz = ux * this.strafeSign + uz * 0.25;
+      const gap = clamp((dist - CONFIG.ai.engageHold) * 0.04, -0.6, 0.9);
+      mx = -uz * this.strafeSign + ux * gap;
+      mz = ux * this.strafeSign + uz * gap;
     }
 
     // 血少的时候不要冲太近
