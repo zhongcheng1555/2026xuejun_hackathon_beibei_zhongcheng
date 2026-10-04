@@ -23,6 +23,9 @@ const _camPos = new THREE.Vector3();
 const _look = { yaw: 0, pitch: 0 };
 const _godCenter = new THREE.Vector3();
 const _sunOffset = new THREE.Vector3(90, 150, 60);
+// 天上那颗太阳的方向：和平行光用的是同一个方向，
+// 这样"天上看到的太阳"和"水面/金属上的反光"才对得上（玩家反馈：湖面有太阳、天上没有）
+const _sunDir = _sunOffset.clone().normalize();
 
 // 现画一张很小的天空渐变图（equirect）当作环境反射源：上蓝下亮，和天空球同色。
 // 不引任何外部图片；横竖都只有几十像素，代价可以忽略。
@@ -186,10 +189,19 @@ export class Game {
         bottomColor: { value: new THREE.Color(0xd6e2ec) },
         offset: { value: 80 },
         exponent: { value: 0.75 },
+        // 天上那颗太阳/月亮：方向、颜色、圆面大小、光晕强度
+        sunDir: { value: _sunDir.clone() },
+        sunColor: { value: new THREE.Color(0xfff0d8) },
+        sunRad: { value: 0.05 },
+        sunHalo: { value: 0.5 },
       },
       vertexShader: `
         varying vec3 vWorldPosition;
+        varying vec3 vLocalPos;
         void main() {
+          // 天空球是**跟着相机走**的，所以"看出去的方向"要用本地坐标算：
+          // 用世界坐标的话相机会被减进去，跑到地图边上太阳会跟着漂
+          vLocalPos = position;
           vec4 worldPosition = modelMatrix * vec4(position, 1.0);
           vWorldPosition = worldPosition.xyz;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -200,10 +212,23 @@ export class Game {
         uniform vec3 bottomColor;
         uniform float offset;
         uniform float exponent;
+        uniform vec3 sunDir;
+        uniform vec3 sunColor;
+        uniform float sunRad;    // 圆面的角半径（弧度）
+        uniform float sunHalo;   // 光晕强度
         varying vec3 vWorldPosition;
+        varying vec3 vLocalPos;
         void main() {
-          float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
-          gl_FragColor = vec4(mix(bottomColor, topColor, pow(max(h, 0.0), exponent)), 1.0);
+          float h = normalize(vLocalPos + vec3(0.0, offset, 0.0)).y;
+          vec3 col = mix(bottomColor, topColor, pow(max(h, 0.0), exponent));
+          // 太阳：中间一个软边的圆面 + 一圈光晕
+          vec3 d = normalize(vLocalPos);
+          float c = dot(d, sunDir);
+          float ang = acos(clamp(c, -1.0, 1.0));
+          float disc = 1.0 - smoothstep(sunRad * 0.8, sunRad, ang);
+          float halo = pow(max(c, 0.0), 30.0) * sunHalo;
+          col += sunColor * (disc * 1.15 + halo);
+          gl_FragColor = vec4(col, 1.0);
         }
       `,
       side: THREE.BackSide,
@@ -265,6 +290,20 @@ export class Game {
     if (this.night) this._applyNightLook(b);
     // 地形自己要知道是不是夜战：夜里的岩浆要更亮（见 terrain.update）
     this.terrain.night = this.night;
+
+    // 天上那颗太阳（夜里换成月亮）。方向永远跟平行光一致 ——
+    // 之前天上根本没画太阳，可湖面/金属上又有它的反光，看着就是"哪儿来的光"
+    const sunU = this.sky.material.uniforms;
+    sunU.sunDir.value.copy(_sunDir);
+    if (this.night) {
+      sunU.sunColor.value.setHex(CONFIG.night.sun);
+      sunU.sunRad.value = 0.03;      // 月亮：小一点
+      sunU.sunHalo.value = 0.22;     // 光晕也淡一点
+    } else {
+      sunU.sunColor.value.setHex(b.light.sun);
+      sunU.sunRad.value = 0.05;
+      sunU.sunHalo.value = 0.5;
+    }
     // 放最后：环境反射要跟着"最终那套天空颜色"走（夜里就是月夜的颜色）
     this._applySkyEnv();
   }
