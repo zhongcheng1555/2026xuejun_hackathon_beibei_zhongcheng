@@ -103,6 +103,53 @@ export class Terrain {
     this.group.name = 'terrain';
     scene.add(this.group);
 
+    // 礁岛（只有海图有）：从海底鼓起来的圆包，顶露出水面。
+    // 必须在 _buildGround 之前算好 —— 它直接算进高度场（见 rawHeight），
+    // 所以船撞得到、飞机从上面飞过、AI 自己会绕。
+    // 高度不是拍脑袋给的：先算出这一局的水位，再让岛顶**正好露出水面 above 米**，
+    // 免得噪声一抖就变成"水下暗礁"或"高得离谱的岛"
+    this.islands = [];
+    if (biome.islands && this.lakes.length) {
+      const cfg = biome.islands;
+      const L = this.lakes[0];
+      const levelY = this.rawHeight(L.x, L.z) + L.depth * 0.78;   // 此时还没撒岛 = 湖心盆底
+      const gap = this.size * (cfg.minGap || 0.1);
+      // 解 t²(3-2t) = y（在 [0,1] 上单调递增）—— 用来算"水线切在包上的哪一个半径"
+      const solveT = (y) => {
+        let lo = 0;
+        let hi = 1;
+        for (let i = 0; i < 24; i++) {
+          const m = (lo + hi) / 2;
+          if (m * m * (3 - 2 * m) < y) lo = m;
+          else hi = m;
+        }
+        return (lo + hi) / 2;
+      };
+      for (let i = 0; i < cfg.count; i++) {
+        for (let tries = 0; tries < 40; tries++) {
+          // k 卡在 [0.18, 0.6]：太靠湖心会把水位算歪，太靠岸会和"海岸线"打架
+          const a = rand(0, Math.PI * 2);
+          const k = rand(0.18, 0.6);
+          const x = L.x + Math.cos(a) * L.rx * k;
+          const z = L.z + Math.sin(a) * L.rz * k;
+          const r = this.size * rand(cfg.r[0], cfg.r[1]);
+          let ok = true;
+          for (const I of this.islands) {
+            if (Math.hypot(I.x - x, I.z - z) < I.r + r + gap) { ok = false; break; }
+          }
+          if (!ok) continue;
+          const baseY = this.rawHeight(x, z);              // 该点的海底（不撒岛时）
+          const above = rand(cfg.above[0], cfg.above[1]);   // 岛顶露出水面多高
+          const h = levelY + above - baseY;
+          // 真正的"岛"只占包装到水线以内那部分：h 越大，水线切出来的岸越小
+          const depthHere = Math.max(0.5, levelY - baseY);
+          const shore = r * solveT(clamp(depthHere / (depthHere + above), 0, 1));
+          this.islands.push({ x, z, r, h, shore });
+          break;
+        }
+      }
+    }
+
     this._buildGround();
     this._buildCrater();      // 火山口里那池岩浆（只有火山图有）
     this._buildStreamSurface();
@@ -113,6 +160,13 @@ export class Terrain {
     if (biome.maze) this._buildMaze();
     else if (biome.city) this._buildCity();
     else this._scatterObstacles();
+
+    // 礁岛登记成碰撞体：地形本身没有"墙"的概念（坦克是踩着高度场走的），
+    // 不登记的话船会直接开上岛、被地形抬起来。半径用**水线切出来的岸**（比圆包小），
+    // 顶只算到露出水面之上 8 米 —— 飞机从上面飞过不受影响
+    for (const I of this.islands) {
+      this._pushCollider(I.x, I.z, this.heightAt(I.x, I.z) - I.h, I.shore * 0.92, I.h + 8, 'island');
+    }
 
     // 这张图最高障碍物的顶（含隧道岩顶）。飞机用它决定"最低能飞到哪" ——
     // 山谷的岩壁有 24m 高，只按"离地 18m 拉起来"会让俯冲中的飞机撞在岩壁顶上掉翅膀。
@@ -256,23 +310,33 @@ export class Terrain {
     const reeds = [];
     const weeds = [];
     for (const L of this.lakes) {
-      // 荷叶：湖里随机撒，一小片片贴着水面
+      // 荷叶：湖里随机撒，一小片片贴着水面（岛上是陆地，不撒）
       const nLily = Math.round((L.rx * L.rz) / 1100);
       for (let i = 0; i < nLily; i++) {
         const a = rand(0, Math.PI * 2);
         const r = Math.sqrt(Math.random()) * 0.92;
-        lilies.push({
-          x: L.x + Math.cos(a) * L.rx * r,
-          z: L.z + Math.sin(a) * L.rz * r,
-          y: L.level + 0.06, ry: rand(0, Math.PI * 2),
-          s: rand(1.5, 3.2), tint: rand(0.85, 1.12),
-        });
+        const x = L.x + Math.cos(a) * L.rx * r;
+        const z = L.z + Math.sin(a) * L.rz * r;
+        // 注意：这几发 rand 必须在"要不要跳过"之前抽掉 ——
+        // 否则礁岛上少摆一片荷叶就会让后面整张图的随机序列错位（掩体会换个地方长）
+        const ry = rand(0, Math.PI * 2);
+        const s = rand(1.5, 3.2);
+        const tint = rand(0.85, 1.12);
+        if (this.heightAt(x, z) > L.level) continue;   // 礁岛上没有荷叶
+        lilies.push({ x, z, y: L.level + 0.06, ry, s, tint });
       }
-      // 芦苇丛：贴着浅水边（归一化 0.86~1.0），露出水面一大截
+      // 芦苇丛：贴着**真实水线**摆。不能用"椭圆的 0.86~1.0" ——
+      // 椭圆靠外那一圈在有些图上其实是滩，芦苇会整丛埋进地里（海图尤其明显）
       const nReed = Math.round((L.rx + L.rz) / 11);
+      const RN = 32;
       for (let i = 0; i < nReed; i++) {
         const a = rand(0, Math.PI * 2);
-        const k = rand(0.86, 1.0);
+        let k = 0.9;
+        if (L.waterRing) {
+          let idx = Math.round((a / (Math.PI * 2)) * RN);
+          idx = ((idx % RN) + RN) % RN;
+          k = L.waterRing[idx] * rand(0.94, 1.03);
+        }
         reeds.push({
           x: L.x + Math.cos(a) * L.rx * k,
           z: L.z + Math.sin(a) * L.rz * k,
@@ -287,10 +351,11 @@ export class Terrain {
         const r = Math.sqrt(Math.random()) * 0.88;
         const x = L.x + Math.cos(a) * L.rx * r;
         const z = L.z + Math.sin(a) * L.rz * r;
-        weeds.push({
-          x, z, y: this.heightAt(x, z) + 0.3, ry: rand(0, Math.PI * 2),
-          s: rand(0.8, 1.6), tint: rand(0.8, 1.1),
-        });
+        const ry = rand(0, Math.PI * 2);      // 同上：先抽，再决定跳不跳
+        const s = rand(0.8, 1.6);
+        const tint = rand(0.8, 1.1);
+        if (this.heightAt(x, z) > L.level) continue;   // 礁岛上没有海草
+        weeds.push({ x, z, y: this.heightAt(x, z) + 0.3, ry, s, tint });
       }
     }
 
@@ -594,6 +659,17 @@ export class Terrain {
       if (k >= 1) continue;
       const t = clamp((1 - k) / 0.45, 0, 1);
       h -= L.depth * t * t * (3 - 2 * t);
+    }
+    // 礁岛（海图）：海边鼓起来的圆包，压在挖好的盆上面
+    if (this.islands && this.islands.length) {
+      for (const I of this.islands) {
+        const dx = x - I.x;
+        const dz = z - I.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= I.r * I.r) continue;
+        const t = 1 - Math.sqrt(d2) / I.r;
+        h += I.h * t * t * (3 - 2 * t);
+      }
     }
     return h;
   }

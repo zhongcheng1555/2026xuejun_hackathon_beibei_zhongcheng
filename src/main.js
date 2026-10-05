@@ -493,8 +493,8 @@ export class Game {
     this.lastContact = { ally: null, enemy: null };
     this.tankNameCounter = 0;   // 每局都从「坦克1」重新编号，不会越打越大
 
-    // 海战：开炮艇 = 海战（右下角的"必出纯海战"也能直接进）。
-    // 地形强制换成海 —— 不然船上没水可跑
+    // 水上战场：开炮艇 = 水上战（右下角的开关也能直接进）。
+    // 水图只有两张：湖（陆水混编，坦克能绕岸）、海（几乎全是水，只有炮艇）
     this.pureSea = this.playerSide === 'boat' || !!this.hud.forcePureSea;
     if (this.pureSea) this.playerSide = 'boat';
 
@@ -502,13 +502,31 @@ export class Game {
     // 另外有 10% 概率赶上夜战（任何地形都可能入夜）
     this.night = Math.random() < CONFIG.night.chance;
     // 菜单右下角「自定义地图」勾了地形就只在这几种里抽；没勾（默认）还是全随机
+    const isWater = (b) => b.id === 'lake' || b.id === 'ocean';
     const pool = this.hud && this.hud.biomePool ? this.hud.biomePool : [];
     const picked = pool.map((id) => BIOMES.find((b) => b.id === id)).filter(Boolean);
-    const seaBiome = BIOMES.find((b) => b.id === 'sea');
-    const list = this.pureSea
-      ? [seaBiome].filter(Boolean)
-      : picked.length ? picked : BIOMES;   // 没勾 / 勾的都不认识 → 全随机
+    // 开船 → 只在水图里挑；开坦克 / 飞机 → 把「海」排除掉（那张图几乎没有陆地，坦克进去就废了），
+    // 但「湖」留着 —— 湖两岸都是陆地，是唯一"陆水都能打"的图
+    const allow = (b) => (this.pureSea ? isWater(b) : b.id !== 'ocean');
+    const pickedPool = picked.filter(allow);
+    const list = pickedPool.length ? pickedPool : BIOMES.filter(allow);
     this.currentBiome = list[randInt(0, list.length - 1)];
+
+    // 混编抽签：混编只发生在「湖」上（海是纯炮艇图）
+    //   打水上战抽到湖 → 可能额外冒出坦克 / 飞机（两个各自独立，所以"都有"也会出现）
+    //   打陆空战抽到湖 → 可能额外冒出炮艇下水
+    this.mixTanks = false;
+    this.mixPlanes = false;
+    this.mixBoats = false;
+    if (this.currentBiome.id === 'lake') {
+      if (this.pureSea) {
+        this.mixTanks = Math.random() < CONFIG.boat.lakeMixTankChance;
+        this.mixPlanes = Math.random() < CONFIG.boat.lakeMixPlaneChance;
+      } else {
+        this.mixBoats = Math.random() < CONFIG.boat.landMixBoatChance;
+      }
+    }
+
     this._buildTerrain(this.currentBiome);
     this.treads.reset(this.terrain);
 
@@ -524,7 +542,7 @@ export class Game {
     const tankIsPlayer = this.playerSide !== 'plane';
     let pureGround = false;
     if (this.pureSea) {
-      // 海战：天上不出飞机、地上不出坦克，只有船（所以这两条抽签全跳过）
+      // 水上战：不走"纯空战 / 纯陆战"这两条抽签 —— 阵容由上面那份混编抽签定
       this.pureAir = false;
     } else if (forceAir) {
       this.pureAir = true;
@@ -560,15 +578,20 @@ export class Game {
 
     if (this.pureAir) {
       this.planes.configure(CONFIG.mode.pureAirPerSide, CONFIG.mode.pureAirPerSide, true);
-    } else if (this.pureGround || this.pureSea) {
-      this.planes.configure(0, 0, false);         // 纯陆战 / 海战：两边空军都不上场
+    } else if (this.pureSea) {
+      // 水上战：海图不出飞机；湖图混编到飞机才出（各 2 架，不复活，和常规局一个规矩）
+      if (this.mixPlanes) this.planes.configure(CONFIG.boat.lakeMixPlanes, CONFIG.boat.lakeMixPlanes, false);
+      else this.planes.configure(0, 0, false);
+    } else if (this.pureGround) {
+      this.planes.configure(0, 0, false);         // 纯陆战：两边空军都不上场
     } else {
       this.planes.configure(null, null, false);   // 常规局：飞机全上，打一架少一架
     }
     this.planes.reset();
     // 纯空战和纯陆战都不派侦察兵 —— 主打一个"盲战"：
-    // 没有侦察兵替你摸底，敌人在哪得自己找（常规局照常派）
-    this.scouts.setCount(this.pureAir || this.pureGround || this.pureSea ? 0 : CONFIG.scout.count);
+    // 没有侦察兵替你摸底，敌人在哪得自己找（常规局照常派）。
+    // 水上战也不派，但湖上混进坦克那局例外：岸上在打，情报有用
+    this.scouts.setCount(this.pureAir || this.pureGround || (this.pureSea && !this.mixTanks) ? 0 : CONFIG.scout.count);
     this.scouts.reset();
     this.aimLine.terrain = this.terrain;
 
@@ -615,7 +638,7 @@ export class Game {
     this.playerPlane = null;
     this.edgeWarnTimer = 0;
     if (this.pureSea) {
-      // 海战：只有船。你在西边、敌人在东边，隔着整片海面互相找
+      // 水上战：只有船。你在西边、敌人在东边，隔着整片水面互相找
       const spawns = waterSpawns(this.terrain, TEAM.ALLY, CONFIG.boat.perTeam);
       this.player = this._spawnBoat(TEAM.ALLY, spawns[0], 0, true);
       this.lookYaw = 0;
@@ -625,6 +648,10 @@ export class Game {
       this.camPitch = this.lookPitch;
       for (let i = 1; i < CONFIG.boat.perTeam; i++) {
         this._spawnBoat(TEAM.ALLY, spawns[i], 0, false);
+      }
+      // 湖上混编：我方额外几辆坦克（在岸上，船在水里 —— 同一场仗两种打法）
+      for (let i = 0; i < (this.mixTanks ? CONFIG.boat.lakeMixTanks : 0); i++) {
+        this._spawnTank(TEAM.ALLY, this._findSpawn(TEAM.ALLY, 22), rand(-0.5, 0.5), false);
       }
     } else if (this.pureAir && this.playerSide === 'tank') {
       // 你就是"空战里那辆坦克"：地面只有你一辆，天上两边各 2 架 AI 飞机在打。
@@ -678,6 +705,9 @@ export class Game {
       for (let i = 0; i < this.enemyTotal; i++) {
         this._spawnBoat(TEAM.ENEMY, es[i], Math.PI, false);
       }
+      for (let i = 0; i < (this.mixTanks ? CONFIG.boat.lakeMixTanks : 0); i++) {
+        this._spawnTank(TEAM.ENEMY, this._findSpawn(TEAM.ENEMY, 22), Math.PI + rand(-0.5, 0.5), false);
+      }
     }
     // 地面部队：纯空战里两边各最多一辆（你开坦克的话，我方那辆已经是你了，这儿不再放）
     if (this.pureAir) {
@@ -690,11 +720,18 @@ export class Game {
         this._slowFireTank(this._spawnTank(TEAM.ENEMY, p, Math.PI + rand(-0.5, 0.5), false));
       }
     } else if (!this.pureSea) {
-      // 海战里一个坦克都不放（上面放的是船）
+      // 水上战里一个坦克都不放（上面放的是船）
       for (let i = 0; i < this.enemyTotal; i++) {
         const p = this._findSpawn(TEAM.ENEMY, 22);
         this._spawnTank(TEAM.ENEMY, p, Math.PI + rand(-0.5, 0.5), false);
       }
+    }
+    // 陆空战抽到「湖」：低概率额外刷两条炮艇下水（岸上一场、水上一场）
+    if (!this.pureSea && this.mixBoats) {
+      const a = waterSpawns(this.terrain, TEAM.ALLY, 1);
+      const e = waterSpawns(this.terrain, TEAM.ENEMY, 1);
+      if (a.length) this._spawnBoat(TEAM.ALLY, a[0], 0, false);
+      if (e.length) this._spawnBoat(TEAM.ENEMY, e[0], Math.PI, false);
     }
     this.updateCamera(1);
 
@@ -705,10 +742,19 @@ export class Game {
       this.hud.setPlayer(this.player);
       this.hud.setMode(this.player.precise);
     }
+    // 顶上那排兵力数字的标签跟着本局的阵容走（船 / 坦克 / 飞机 有哪几种就写哪几种）
+    this.hud.setForceLabels({
+      boat: this.tanks.some((t) => t.isBoat),
+      tank: this.tanks.some((t) => !t.isBoat),
+      air: this.planes.list.some((p) => !p.retired),
+    });
     if (this.pureSea) {
+      const bits = [`双方各 ${CONFIG.boat.perTeam} 艘炮艇`];
+      if (this.mixTanks) bits.push(`坦克 ${CONFIG.boat.lakeMixTanks} 辆`);
+      if (this.mixPlanes) bits.push(`飞机 ${CONFIG.boat.lakeMixPlanes} 架`);
       this.hud.banner(
-        '海战',
-        `地形：${this.currentBiome.name} · 双方各 ${CONFIG.boat.perTeam} 艘炮艇 · 船开不上岸，只能在水里绕` +
+        this.currentBiome.id === 'ocean' ? '海战' : (this.mixTanks || this.mixPlanes ? '湖战 · 混编' : '湖战'),
+        `地形：${this.currentBiome.name} · ${bits.join(' · ')} · 船开不上岸，只能在水里绕` +
           (this.night ? ' · 夜战' : ''),
         3
       );
@@ -736,6 +782,7 @@ export class Game {
       this.hud.banner(
         '战斗开始',
         `地形：${this.currentBiome.name} · 我方 ${this.allyTotal} 辆 · 敌方 ${this.enemyTotal} 辆 · 空中 ${CONFIG.plane.count} 架` +
+          (this.mixBoats ? ` · 水里还有 ${this.tanks.filter((t) => t.isBoat).length} 艘炮艇` : '') +
           (this.playerSide === 'plane' ? ' · 你驾驶飞机' : '') +
           (this.night ? ' · 夜战' : ''),
         3
@@ -878,7 +925,9 @@ export class Game {
   // 一律说成"小溪、涉水减速"，于是在火山（岩浆河）和雪原（冰面）上说的都是错的。
   _feedTerrainTip() {
     const st = this.terrain.stream;
-    if (!st) this.hud.feed('注意上下坡：上坡慢、下坡快', 'friendly');
+    if (!st && this.terrain.lakes && this.terrain.lakes.length) {
+      this.hud.feed('这是水图：深水坦克开不进去，炮艇也只能待在水里 —— 隔着水打', 'air');
+    } else if (!st) this.hud.feed('注意上下坡：上坡慢、下坡快', 'friendly');
     else if (st.kind === 'lava') this.hud.feed('地形里有岩浆河：踩上去又烧血又减速，尽量绕开', 'danger');
     else if (st.kind === 'ice') this.hud.feed('地形里有结冰的小河：冰面能正常开过去，不减速', 'air');
     else this.hud.feed('地形里有小溪，涉水会明显减速', 'air');

@@ -113,6 +113,12 @@ export const CONFIG = {
     draft: 0.9,             // 吃水：船体沉到水面下多少
     keepIn: 0.94,           // 船最多跑到"真实水线的这个比例处"（免得开上岸）
     spawnFrac: 0.7,         // 出生点摆在"真实水线的几成处"（越靠里越稳在水里）
+    // 混编：湖是唯一"陆水都能打"的图，所以混编都发生在湖上（海是纯炮艇图）
+    lakeMixTankChance: 0.4,   // 湖战里额外出现坦克的概率（两边各 1 辆）
+    lakeMixPlaneChance: 0.4,  // 湖战里额外出现飞机的概率（两边各 2 架）
+    lakeMixTanks: 1,          // 混编坦克时每边几辆
+    lakeMixPlanes: 2,         // 混编飞机时每边几架
+    landMixBoatChance: 0.5,   // 坦克/飞机模式抽到「湖」图时，额外刷炮艇的概率（两边各 1 艘）
   },
 
   // 彩蛋：子弹顺着太阳的方向打上去 = 把太阳打碎 —— 太阳先裂开飞散、再渐隐，
@@ -644,8 +650,8 @@ export const BIOMES = [
     stream: { chance: 0, width: 10, depth: 1.2 },   // 不铺河：别把走廊淹了
   },
   {
-    id: 'sea',
-    name: '海',
+    id: 'lake',
+    name: '湖',
     size: 780,
     heightScale: 11,
     noiseScale: 0.004,
@@ -658,15 +664,44 @@ export const BIOMES = [
     sky: { top: 0x2f74b4, bottom: 0xdceaf2 },
     fog: { color: 0xcfe0e8, near: 300, far: 1150 },
     light: { sun: 0xfff2dc, sunIntensity: 1.6, hemi: 0.82, ambient: 0.4 },
-    stream: { chance: 0, width: 10, depth: 1.2 },   // 不铺河：这片海本身就是主角
-    // 海：两片大椭圆交叠，把战场从中间横着切开 —— 左右各留一条 ~78m 的岸上通道，
+    stream: { chance: 0, width: 10, depth: 1.2 },   // 不铺河：这片水本身就是主角
+    // 湖：两片大椭圆交叠，把战场从中间横着切开 —— 左右各留一条 ~78m 的岸上通道，
     // 坦克只能绕着走（深水是硬障碍，开不进去）。
-    // 这就是"水当隔离"：正面过不去，要么绕远，要么等海战载具
+    // 这里是**混编战场**：可以纯陆战、纯湖战，也可以船和坦克/飞机一起上
     lake: {
       chance: 1, count: 2, spots: [[-0.10, 0], [0.10, 0]],
-      // 海盆要够深：太浅的话连湖心看着都像一片浅水（玩家反馈）
+      // 水盆要够深：太浅的话连湖心看着都像一片浅水（玩家反馈）
       rx: 0.24, rz: 0.21, depth: 22,
       color: 0x24618f, speedMul: 0.38,
+    },
+  },
+  {
+    id: 'ocean',
+    name: '海',
+    size: 820,
+    heightScale: 9,
+    noiseScale: 0.0035,
+    ridge: 1.4,
+    // 海面上没有树 / 灌木这些陆生掩体，掩护全靠礁岛
+    trees: 0, rocks: 0, bushes: 0, sandbags: 0,
+    // 礁岛：从海底鼓起来的几座圆包，顶露出水面。船绕着走（登记成碰撞体），
+    // 飞机飞得高，直接从上面过。半径和"露出水面多高"都按地图尺寸给
+    islands: { count: 5, r: [0.032, 0.06], above: [7, 16], minGap: 0.09 },
+    // 海图太大了（rx 377m），出生点按湖图的比例摆会让两军隔 400 多米 —— 单独收近一点
+    boatSpawnFrac: 0.45,
+    ground: { base: 0x9c8a68, second: 0xb09a74, rock: 0x7f7a6e, high: 0xc4ad86 },
+    parts: { leaf: 0x3f6f2c, trunk: 0x55402a, rock: 0x837a70, bush: 0x4d7a34, sandbag: 0x8a7c58,
+      lily: 0x4f8f3c, reed: 0x7f9a4a, weed: 0x2f6b4a },
+    sky: { top: 0x2a6cb0, bottom: 0xd2e8f4 },
+    fog: { color: 0xc6dcea, near: 340, far: 1260 },
+    light: { sun: 0xfff2dc, sunIntensity: 1.7, hemi: 0.9, ambient: 0.45 },
+    stream: { chance: 0, width: 10, depth: 1.2 },
+    // 真正的海：一片几乎占满战场的大水，只散着几座礁岛。
+    // 只有炮艇能在这儿跑 —— 这里不出坦克、不出飞机（坦克掉进来就废了）
+    lake: {
+      chance: 1, count: 1, spots: [[0, 0]],
+      rx: 0.46, rz: 0.46, depth: 30,
+      color: 0x1f5f8c, speedMul: 0.36,
     },
   },
 ];

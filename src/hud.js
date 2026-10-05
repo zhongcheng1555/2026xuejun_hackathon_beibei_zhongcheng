@@ -8,6 +8,10 @@ export class HUD {
       hud: document.getElementById('hud'),
       ally: document.getElementById('stat-ally'),
       enemy: document.getElementById('stat-enemy'),
+      labelAlly: document.getElementById('label-ally'),
+      labelEnemy: document.getElementById('label-enemy'),
+      unitAlly: document.getElementById('unit-ally'),
+      unitEnemy: document.getElementById('unit-enemy'),
       allyAir: document.getElementById('stat-ally-air'),
       enemyAir: document.getElementById('stat-enemy-air'),
       kills: document.getElementById('stat-kills'),
@@ -158,7 +162,7 @@ export class HUD {
       desc.textContent = this.side === 'plane'
         ? ''
         : this.side === 'boat'
-          ? '炮艇：只能在水里跑，炮慢、皮薄，换的是航速（会自动换成海图）。'
+          ? '炮艇：只能在水里跑，炮慢、皮薄，换的是航速（会换成水图：湖 / 海）。'
           : '坦克：装甲厚、能修车，扛得住几发。';
     }
   }
@@ -295,6 +299,22 @@ export class HUD {
     this.el.kills.textContent = state.kills;
     this.el.friendlyKills.textContent = state.friendlyKills;
     this.el.planes.textContent = state.planesDown;
+  }
+
+  // 顶上那排兵力标签：本局有什么就写什么（船 / 坦克 / 飞机）。
+  // 混编局里"友军 坦克 / 飞机"会把水里的船也数进去，说不清楚，所以跟着阵容走
+  setForceLabels({ boat, tank, air }) {
+    const kinds = [];
+    if (boat) kinds.push('炮艇');
+    if (tank) kinds.push('坦克');
+    if (air) kinds.push('飞机');
+    const text = kinds.length ? ` / ${kinds.join(' / ')}` : '';
+    if (this.el.labelAlly) this.el.labelAlly.textContent = `友军${text}`;
+    if (this.el.labelEnemy) this.el.labelEnemy.textContent = `敌军${text}`;
+    // 只有船的时候量词用"艘"，免得"2 辆炮艇"读着别扭
+    const unit = boat && !tank ? '艘' : '辆';
+    if (this.el.unitAlly) this.el.unitAlly.textContent = unit;
+    if (this.el.unitEnemy) this.el.unitEnemy.textContent = unit;
   }
 
   setPlayer(tank) {

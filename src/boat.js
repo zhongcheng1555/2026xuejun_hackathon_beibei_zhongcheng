@@ -191,6 +191,10 @@ export function waterSpawns(terrain, team, count) {
   const dir = team === TEAM.ALLY ? -1 : 1;    // 我方在西、敌方在东
   const ring = L.waterRing;
   const N = ring && ring.length ? ring.length : 1;
+  // 出生点离岸多远：海图比湖图大得多，用同一个比例会让两军隔 400 多米，所以图可以自己调
+  const frac = terrain.biome && terrain.biome.boatSpawnFrac !== undefined
+    ? terrain.biome.boatSpawnFrac
+    : CONFIG.boat.spawnFrac;
   const ringAt = (th) => {
     if (!ring || !ring.length) return 0.8;
     let a = (th / (Math.PI * 2)) * N;
@@ -204,7 +208,17 @@ export function waterSpawns(terrain, team, count) {
     const len = Math.hypot(ux, uz) || 1;
     const nx = (dir * ux) / len;
     const nz = uz / len;
-    const lim = Math.max(0.1, ringAt(Math.atan2(nz, nx)) * CONFIG.boat.spawnFrac);
+    const th = Math.atan2(nz, nx);
+    let lim = Math.max(0.1, ringAt(th) * frac);
+    // 别把船生在礁岛上：真压上去了就往湖心方向收
+    const islands = terrain.islands || [];
+    for (let s = 0; s < 8; s++) {
+      const x = L.x + nx * lim * L.rx;
+      const z = L.z + nz * lim * L.rz;
+      const hit = islands.some((I) => Math.hypot(I.x - x, I.z - z) < I.shore + 12);
+      if (!hit) break;
+      lim *= 0.78;
+    }
     out.push(new THREE.Vector3(L.x + nx * lim * L.rx, 0, L.z + nz * lim * L.rz));
   };
   // 沿湖的短轴上下错开，别让两条船叠在一条线上
