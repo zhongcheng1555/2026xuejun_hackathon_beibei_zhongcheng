@@ -119,7 +119,7 @@ export class Game {
     this.followYaw = 0;    // 跟随车头的那一段（带阻尼）
     this.hudTimer = 0;
     this.wreckTimer = 0;
-    this.lastScoutMsg = 0;
+    this.godZoom = 1;      // 上帝视角的缩放（滚轮调，观战用）
     this.elapsed = 0;
 
     this._setupSky();
@@ -483,11 +483,17 @@ export class Game {
   }
 
   startBattle() {
+    // 换局彻底清场：上一局的痕迹**按局清**，不靠定时淡出 ——
+    // 不然点了「再来一局」还能看到上一局的烟、弹坑、飞在半空的炮弹和残骸
+    // （残骸本来就还在 this.tanks 里，dispose 时一起带走）
     for (const t of this.tanks) t.dispose();
+    if (this.effects && this.effects.clear) this.effects.clear();
+    if (this.bullets && this.bullets.clear) this.bullets.clear();
     this.tanks = [];
     this.ais = [];
     this.wrecks = [];
     this._godPos = null;
+    this.godZoom = 1;          // 观战缩放每局回到默认
     this.deathCamTimer = 0;
     this.elapsed = 0;
     this.lastContact = { ally: null, enemy: null };
@@ -1007,7 +1013,6 @@ export class Game {
   onTankDestroyed(tank, killer) {
     tank.corpseTimer = CONFIG.tank.corpseTime;   // 黑壳冒烟 5 秒后消失
     this.wrecks.push(tank);
-    const killerName = killer ? killer.name : null;
 
     if (tank === this.player) {
       this.stats.playerDeaths++;
@@ -1015,43 +1020,20 @@ export class Game {
       this._startDeathCam();
     } else if (tank.team === TEAM.ALLY) {
       this.stats.allyLost++;
-      if (killer === LAVA) {
-        this.hud.feed(`友军 ${tank.name} 陷进岩浆烧毁了`, 'danger');
-      } else if (killer === this.player) {
+      // 友军的伤亡**不播报**：这战场没有小地图、没有敌情面板，
+      // 屏幕上只该出现"你自己干的"和"你自己身上发生的"
+      // （原来连"友军坦克3 阵亡""敌方自相残杀"都报，等于白送情报）
+      if (killer === this.player) {
         this.stats.friendlyKills++;
         this.hud.feed(`误伤！你击毁了友军 ${tank.name}`, 'friendly');
         this.hud.hitMark('friendly');
-      } else if (killer && killer.isPlane) {
-        if (killer.team === TEAM.ALLY) {
-          this.hud.feed(`我方空军误伤，${tank.name} 被自家扫射击毁`, 'friendly');
-        } else {
-          this.hud.feed(`友军 ${tank.name} 被敌方空军扫射击毁`, 'air');
-        }
-      } else if (killer && killer.team === TEAM.ALLY) {
-        this.hud.feed(`友军 ${killerName} 误伤，${tank.name} 被自家炮弹打爆`, 'friendly');
-      } else {
-        this.hud.feed(`友军 ${tank.name} 阵亡`, 'danger');
       }
     } else {
       this.stats.enemyLost++;
-      if (killer === LAVA) {
-        this.hud.feed(`敌方 ${tank.name} 陷进岩浆烧毁了`, 'kill');
-      } else if (killer === this.player) {
+      if (killer === this.player) {
         this.stats.kills++;
         this.hud.feed(`你击毁了敌方 ${tank.name}`, 'kill');
         this.hud.hitMark('kill');
-      } else if (killer && killer.isPlane) {
-        if (killer.team === TEAM.ENEMY) {
-          this.hud.feed(`敌方空军误伤，${tank.name} 被自家扫射击毁`, 'friendly');
-        } else {
-          this.hud.feed(`我方空军扫射击毁了敌方 ${tank.name}`, 'kill');
-        }
-      } else if (killer && killer.team === TEAM.ALLY) {
-        this.hud.feed(`友军 ${killerName} 击毁了敌方 ${tank.name}`, 'kill');
-      } else if (killer && killer.team === TEAM.ENEMY) {
-        this.hud.feed(`敌方自相残杀：${killerName} 打爆了 ${tank.name}`, 'friendly');
-      } else {
-        this.hud.feed(`敌方 ${tank.name} 被击毁`, '');
       }
     }
     this.updateCounts();
@@ -1074,15 +1056,13 @@ export class Game {
 
   // 飞机掉了一片机翼：说清楚是哪一侧、怎么掉的（撞地 / 撞障碍 / 挨弹 / 对撞）
   onPlaneWingLost(plane, side, cause) {
-    const who = plane === this.player ? '你的飞机' : plane.name;
     const why = cause === 'ground' ? '机翼蹭到地面'
       : cause === 'obstacle' ? '机翼撞上障碍物'
         : cause === 'crash' ? '和对方撞在一起'
           : '机翼被打断';
+    // 只报你自己的飞机（别人的机翼掉了不播报 —— 那是情报）
     if (plane === this.player) {
       this.hud.feed(`${why}，${side === 'left' ? '左' : '右'}翼没了 —— 赶紧找地方落`, 'danger');
-    } else {
-      this.hud.feed(`${who} ${why}，掉了一侧机翼`, 'kill');
     }
     this.audio.armorHit(plane.pos, false);
   }
@@ -1091,8 +1071,6 @@ export class Game {
   onPlaneLanded(plane) {
     if (plane === this.player) {
       this.hud.feed('平稳落地了 —— 机身开始着火，还能开炮，烧完就没了', 'danger');
-    } else {
-      this.hud.feed(`${plane.name} 迫降在地面上，正在烧`, 'kill');
     }
     this.audio.smallPuff(plane.pos);
   }
@@ -1123,22 +1101,8 @@ export class Game {
       return;
     }
 
-    // 空中相撞会一次报两架，这里只报一次
-    if (cause === 'crash') {
-      if (killer && plane.id < killer.id) {
-        this.hud.feed(`空中相撞！${plane.name} 与 ${killer.name} 同归于尽`, 'air');
-      }
-      this.updateCounts();
-      this._checkBattleEnd();
-      return;
-    }
-    if (cause === 'edge') {
-      this.hud.feed(`${plane.name} 撞上场地边界，坠毁`, isAlly ? 'danger' : 'air');
-      this.updateCounts();
-      this._checkBattleEnd();
-      return;
-    }
-
+    // 别人的飞机掉了**不播报**（"谁击落了谁""敌方飞机重新升空"都是白送情报）。
+    // 只留一条：你自己把他打下来的
     if (killer === this.player) {
       if (isAlly) {
         this.stats.friendlyKills++;
@@ -1146,17 +1110,9 @@ export class Game {
         this.hud.hitMark('friendly');
       } else {
         this.stats.planesDown++;
-        // 只走战报 + 命中标记，和击毁坦克保持一致
-        // （原来飞机额外弹一个"击落！"横幅，打坦克却没有 —— 同样是击毁，不该两套待遇）
         this.hud.feed(`你击落了敌机 ${plane.name}！`, 'air');
         this.hud.hitMark('plane');
       }
-    } else if (killer && killer.isPlane) {
-      this.hud.feed(`${killer.name} 击落了 ${plane.name}`, 'air');
-    } else if (isAlly) {
-      this.hud.feed(`我方飞机 ${plane.name} 被击落`, 'danger');
-    } else {
-      this.hud.feed(`敌方飞机 ${plane.name} 被击落`, 'air');
     }
     // 击落飞机同样要结算胜负！
     // 漏掉这一句的话，"最后剩下的那架是敌机"时永远等不到胜负 ——
@@ -1187,7 +1143,7 @@ export class Game {
       this.input.requestLock();
       return;
     }
-    this.hud.feed(`${plane.name} 重新升空（还剩 ${plane.lives} 次复活）`, plane.team === TEAM.ALLY ? 'air' : 'danger');
+    // 别的飞机什么时候重新升空，不播报（那是情报）
   }
 
   // 侦察兵的情报：我方侦察兵报敌情（air），敌方侦察兵盯上你是警告（danger）
@@ -1199,32 +1155,17 @@ export class Game {
   onScoutKilled(scout, killer, cause = 'shot') {
     const verb = cause === 'crush' ? '压扁' : '打死';
     this.audio.smallPuff(scout.pos);
-    if (killer === this.player) {
-      if (scout.team === TEAM.ALLY) {
-        this.stats.friendlyKills++;
-        this.hud.feed(`误伤！你${verb}了自家的侦察兵`, 'friendly');
-        this.hud.hitMark('friendly');
-      } else {
-        this.hud.feed(`你${verb}了敌方侦察兵`, 'kill');
-        this.hud.hitMark('scout');
-      }
-      return;
+    // 只播报"你自己干的"：自家的侦察兵掉了也不报 ——
+    // 那也是情报（等于告诉你"这附近刚有人开火"）
+    if (killer !== this.player) return;
+    if (scout.team === TEAM.ALLY) {
+      this.stats.friendlyKills++;
+      this.hud.feed(`误伤！你${verb}了自家的侦察兵`, 'friendly');
+      this.hud.hitMark('friendly');
+    } else {
+      this.hud.feed(`你${verb}了敌方侦察兵`, 'kill');
+      this.hud.hitMark('scout');
     }
-    // 我方侦察兵阵亡：炮弹乱飞的时候会连着倒，所以限流，别把战报刷满
-    if (scout.team === TEAM.ALLY && this._scoutMsgReady()) {
-      const text =
-        cause === 'crush' ? '我方侦察兵被坦克压扁了'
-          : cause === 'blast' ? '我方侦察兵被炮火震倒'
-            : '我方侦察兵阵亡';
-      this.hud.feed(text, 'danger');
-    }
-  }
-
-  _scoutMsgReady() {
-    const now = performance.now();
-    if (now - this.lastScoutMsg < 4000) return false;
-    this.lastScoutMsg = now;
-    return true;
   }
 
   _startSpectate() {
@@ -1577,36 +1518,49 @@ export class Game {
     if (!this._godPos) this._godPos = center.clone();
     else this._godPos.lerp(center, 1 - Math.exp(-g.follow * dt));
 
+    // 滚轮缩放：观战最需要它 —— 空战离得远，不拉近根本看不清谁咬谁
+    const wd = this.input.takeWheelDelta ? this.input.takeWheelDelta() : 0;
+    if (wd) this.godZoom = clamp(this.godZoom * (wd > 0 ? 1.12 : 1 / 1.12), g.zoomMin, g.zoomMax);
+    const zoom = this.godZoom || 1;
+
     const cx = this._godPos.x;
     const cz = this._godPos.z;
+    const cy = this._godPos.y;              // 交战区可能在空中（飞机对飞机）
     const base = this.terrain.heightAt(cx, cz);
-    const horizon = g.height / Math.max(0.25, Math.tan(this.godPitch));
+    const h = g.height * zoom;
+    const horizon = h / Math.max(0.25, Math.tan(this.godPitch));
     _camPos.set(
       cx + Math.sin(this.godYaw) * horizon,
-      base + g.height,
+      base + h,
       cz + Math.cos(this.godYaw) * horizon
     );
-    const camGround = this.terrain.heightAt(_camPos.x, _camPos.z) + 26;
+    const camGround = this.terrain.heightAt(_camPos.x, _camPos.z) + 26 * zoom;
     if (_camPos.y < camGround) _camPos.y = camGround;
 
     if (dt > 0.4) this.camera.position.copy(_camPos);
     else this.camera.position.lerp(_camPos, 1 - Math.exp(-9 * dt));
 
-    _point.set(cx, base + 4, cz);
+    // 看的是"交战区本身"：空战的时候要抬头看天上那两架，不能只盯着地面
+    _point.set(cx, Math.max(base + 4, cy), cz);
     this.camera.lookAt(_point);
 
     this._syncSky();
   }
 
-  // 战场上最热闹的地方：离得最近的一对敌我坦克的中点
+  // 战场上最热闹的地方：离得最近的一对敌我单位的中点。
+  // **飞机也算** —— 原来只找坦克对，所以天上打得再凶，上帝视角也一直盯着地面
   _actionCenter(out) {
+    const units = [];
+    for (const a of this.tanks) if (a.alive) units.push(a);
+    if (this.planes) {
+      for (const p of this.planes.list) if (!p.retired && p.alive) units.push(p);
+    }
     let bestA = null;
     let bestB = null;
     let bd = Infinity;
-    for (const a of this.tanks) {
-      if (!a.alive) continue;
-      for (const b of this.tanks) {
-        if (!b.alive || b.team === a.team) continue;
+    for (const a of units) {
+      for (const b of units) {
+        if (b === a || b.team === a.team) continue;
         const d = a.pos.distanceToSquared(b.pos);
         if (d < bd) {
           bd = d;
@@ -1618,17 +1572,18 @@ export class Game {
     if (bestA && bestB) {
       return out.copy(bestA.pos).add(bestB.pos).multiplyScalar(0.5);
     }
-    // 没有交战的（都躲起来了）就看向所有存活坦克的重心
+    // 没有交战的（都躲起来了）就看向所有存活单位的重心
     let sx = 0;
+    let sy = 0;
     let sz = 0;
     let n = 0;
-    for (const t of this.tanks) {
-      if (!t.alive) continue;
+    for (const t of units) {
       sx += t.pos.x;
+      sy += t.pos.y;
       sz += t.pos.z;
       n++;
     }
-    return n ? out.set(sx / n, 0, sz / n) : out.set(0, 0, 0);
+    return n ? out.set(sx / n, sy / n, sz / n) : out.set(0, 0, 0);
   }
 
   _syncSky() {

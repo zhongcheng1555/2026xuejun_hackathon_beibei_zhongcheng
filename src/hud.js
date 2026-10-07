@@ -292,10 +292,12 @@ export class HUD {
   }
 
   setCounts(state) {
+    // 只显示**我方**兵力。敌方剩多少是情报 —— 这战场没有小地图、看不到别人血量，
+    // 数量也一样不该白送（玩家反馈：知道我方有多少就够了）
     this.el.ally.textContent = state.allyAlive;
-    this.el.enemy.textContent = state.enemyAlive;
+    this.el.enemy.textContent = '?';
     this.el.allyAir.textContent = state.allyAir;
-    this.el.enemyAir.textContent = state.enemyAir;
+    this.el.enemyAir.textContent = '?';
     this.el.kills.textContent = state.kills;
     this.el.friendlyKills.textContent = state.friendlyKills;
     this.el.planes.textContent = state.planesDown;
@@ -310,7 +312,8 @@ export class HUD {
     if (air) kinds.push('飞机');
     const text = kinds.length ? ` / ${kinds.join(' / ')}` : '';
     if (this.el.labelAlly) this.el.labelAlly.textContent = `友军${text}`;
-    if (this.el.labelEnemy) this.el.labelEnemy.textContent = `敌军${text}`;
+    // 敌方阵容也只在开局简报里说，这块标签不写细节
+    if (this.el.labelEnemy) this.el.labelEnemy.textContent = '敌军（情报不明）';
     // 只有船的时候量词用"艘"，免得"2 辆炮艇"读着别扭
     const unit = boat && !tank ? '艘' : '辆';
     if (this.el.unitAlly) this.el.unitAlly.textContent = unit;
@@ -382,7 +385,9 @@ export class HUD {
   // 阵亡后转上帝视角（高处俯瞰交战区，鼠标仍可转视角）
   setSpectating() {
     this.el.spectateHint.classList.remove('hidden');
-    this.el.spectateHint.textContent = '你已被击毁 · 上帝视角观战（鼠标 / 方向键转视角）';
+    // 提示挂在屏幕下缘（原来是 58%，正好压在交战区上，挡观战）。
+    // 顺带告诉玩家能缩放 —— 空战离得远，不拉近看不清
+    this.el.spectateHint.textContent = '你已被击毁 · 上帝视角观战（鼠标 / 方向键转视角，滚轮拉远拉近）';
     this.el.crosshair.classList.add('hidden');
     // 人都没了，模式按钮、仪表和修复提示就别占着屏幕
     this.el.modeWidget.classList.add('hidden');

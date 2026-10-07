@@ -124,17 +124,25 @@ export class ScoutManager {
   reset() {
     this.reportCooldown = 0;
     this.warnCooldown = 0;
+    // 每边的"补充名额"每局重置：名额用完，倒下的侦察兵就真的没了
+    this.rebirths = { [TEAM.ALLY]: 0, [TEAM.ENEMY]: 0 };
     this._spawnAll();
   }
 
-  // 复活：保持两边人数
+  // 复活：保持两边人数。但有**每边每局的名额上限**（CONFIG.scout.respawnBudget）——
+  // 原来是无限制补充，所以玩家感觉"侦察兵打都打不完"
   _respawn(dt) {
     for (const s of this.list) {
       if (s.alive) {
         s.respawnAt = undefined;
         continue;
       }
-      if (s.respawnAt === undefined) s.respawnAt = CONFIG.scout.respawn;
+      if (s.respawnAt === undefined) {
+        const used = this.rebirths ? (this.rebirths[s.team] || 0) : 0;
+        // 名额用完了（-1 表示"不再计时"）：这一条就一直躺着
+        s.respawnAt = used >= CONFIG.scout.respawnBudget ? -1 : CONFIG.scout.respawn;
+      }
+      if (s.respawnAt < 0) continue;
       s.respawnAt -= dt;
       if (s.respawnAt <= 0) {
         const p = this.world.terrain.randomSpawnPoint(null, 0);
@@ -143,6 +151,7 @@ export class ScoutManager {
         const idx = this.list.indexOf(s);
         this.world.scene.remove(s.object);
         this.list[idx] = born;
+        if (this.rebirths) this.rebirths[s.team] = (this.rebirths[s.team] || 0) + 1;
       }
     }
   }

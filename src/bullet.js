@@ -107,6 +107,14 @@ export class BulletManager {
     this._recycle(b);
   }
 
+  // 换局清场：把还在飞的炮弹全收回来。
+  // 不清的话，上一局最后一秒射出去的炮弹会飞进新的一局（换图之后看着尤其怪）
+  clear() {
+    for (const b of this.bullets) {
+      if (b.active) this._recycle(b);
+    }
+  }
+
   update(dt) {
     const terrain = this.world.terrain;
     const tanks = this.world.tanks;

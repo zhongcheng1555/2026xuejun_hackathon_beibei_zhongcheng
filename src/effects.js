@@ -91,6 +91,26 @@ export class Effects {
     return e;
   }
 
+  // 换局清场：还在飞的碎片 / 地上的弹坑 / 手里的灯全部收回。
+  // 这一条是"点了再来一局还能看到上一局的烟和弹坑"的修法 ——
+  // 特效原来只按自己的寿命淡出，换局那一瞬间它们还挂在场上
+  clear() {
+    for (const e of this.active) this._recycle(e);
+    this.active.length = 0;
+    for (const m of this.craters) {
+      if (m) {
+        m.visible = false;
+        this.pools.get('crater').push(m);
+      }
+    }
+    this.craters.length = 0;
+    this.craterIndex = 0;
+    for (const l of this.lights) {
+      l.intensity = 0;
+      l.visible = false;
+    }
+  }
+
   update(dt) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const e = this.active[i];

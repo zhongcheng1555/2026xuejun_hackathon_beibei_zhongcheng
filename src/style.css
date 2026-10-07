@@ -492,15 +492,20 @@ body {
 #spectate-hint {
   position: absolute;
   left: 50%;
-  top: 58%;
+  /* 挂在屏幕下缘：原来在 58%（正中间），正好压在交战区上，挡着观战。
+     用 vh 定位，不写死像素 —— 不同分辨率下位置观感一致 */
+  top: auto;
+  bottom: 9vh;
   transform: translateX(-50%);
   padding: 8px 20px;
   border-radius: 999px;
   background: rgba(10, 13, 18, 0.8);
   border: 1px solid rgba(255, 180, 84, 0.4);
   color: #ffd9a0;
-  font-size: 14px;
+  font-size: clamp(12px, 1.6vh, 15px);
   letter-spacing: 1px;
+  max-width: 92vw;
+  text-align: center;
 }
 
 /* ---------- 覆盖层 ---------- */

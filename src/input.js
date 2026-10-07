@@ -6,6 +6,7 @@ export class Input {
     this.keys = new Set();
     this.mouseDX = 0;
     this.mouseDY = 0;
+    this.wheelDelta = 0;
     this.pointerLocked = false;
     this.firePressed = false;
     this.fireHeld = false;
@@ -53,6 +54,11 @@ export class Input {
       this.pointerLocked = document.pointerLockElement === this.canvas;
       if (!this.pointerLocked) this.dragging = false;
     };
+    // 滚轮：上帝视角拉远 / 拉近（观战的时候最需要它 —— 空战离得远，看不清）
+    this._onWheel = (e) => {
+      if (!this.enabled) return;
+      this.wheelDelta += e.deltaY;
+    };
 
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
@@ -61,7 +67,16 @@ export class Input {
     canvas.addEventListener('mousedown', this._onMouseDown);
     window.addEventListener('mouseup', this._onMouseUp);
     document.addEventListener('pointerlockchange', this._onLockChange);
+    canvas.addEventListener('wheel', this._onWheel, { passive: true });
+    window.addEventListener('wheel', this._onWheel, { passive: true });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  // 取走这一帧攒下的滚轮量（取完清零）
+  takeWheelDelta() {
+    const d = this.wheelDelta;
+    this.wheelDelta = 0;
+    return d;
   }
 
   requestLock() {
