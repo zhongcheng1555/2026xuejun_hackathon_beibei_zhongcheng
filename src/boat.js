@@ -45,6 +45,7 @@ export class Boat extends Tank {
     this.shellDamage = CONFIG.boat.shellDamage;
     this.aimErrorMul = CONFIG.boat.aimErrorMul;   // 远距离的瞄准误差只有坦克的四成
     this.pitchMax = CONFIG.boat.turretPitchMax;   // 仰角更大：能抬头打低空飞机
+    this.noAimMode = CONFIG.boat.noAimMode;       // 没有移动/瞄准两套模式，永远常速
 
     // 一开始就摆到水面上（Tank 构造里是按地形高度放的，海里那是盆底）
     this._keepInWater();
@@ -163,8 +164,10 @@ export class Boat extends Tank {
     if (!this.alive) return false;
     if (this.rounds < this.salvo) return false;   // 不满一轮齐射就不放（半轮打出去更亏）
     if (this.shotTimer > 0) return false;
+    // 修复期间不能开炮（但能开船）。注意这和坦克**正好相反**：
+    // 坦克是一开炮就把修复中断掉，炮艇是"修复优先，这一轮先憋着"（玩家要求）
+    if (this.repairing) return false;
 
-    if (this.repairTimer > 0) this.cancelRepair();
     this.shotTimer = CONFIG.tank.shotInterval;
     this.rounds -= this.salvo;
 

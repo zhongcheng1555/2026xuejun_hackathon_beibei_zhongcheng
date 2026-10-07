@@ -414,8 +414,10 @@ export class Terrain {
         let kWater = 1.02;      // 露出来的水线（水刚从这儿开始盖住地面）
         let kWade = 1.02;       // 水深还没超过 wadeDepth 的最里面那条线
         let seenWater = false;
-        for (let s = 1; s <= 90; s++) {
-          const kk = 1.02 - s * 0.012;       // 从岸边一直扫到接近湖心
+        // 步长 0.006：湖岸那段坡很陡（一米掉半米），步长太粗会让"浅滩线"卡在
+        // 水线上或者跳出去两米 —— 坦克要么一点水都沾不到，要么一头扎进深水
+        for (let s = 1; s <= 180; s++) {
+          const kk = 1.02 - s * 0.006;       // 从岸边一直扫到接近湖心
           const h = this.rawHeight(L.x + cx * L.rx * kk, L.z + cz * L.rz * kk);
           const d = L.level - h;
           if (!seenWater && d > 0.15) { seenWater = true; kWater = kk; }

@@ -723,8 +723,10 @@ export class TankAI {
 
     // 身上有伤、这一带又够安全 → 先停下来修车（不必等"周围一个人都没有"）。
     // 注意不能只挂在下面的"没目标"分支里：视野 200m 之内几乎总有敌人，
-    // 坦克就几乎永远有目标，那样它一辈子都不会去修车
-    if (this._tryRepair()) return;
+    // 坦克就几乎永远有目标，那样它一辈子都不会去修车。
+    // 坦克：修车就站住（直接 return，这一帧别的都不干）。
+    // 炮艇：边开边修 —— 继续往下走，正常机动，只是开不了炮（fire 里会拦）
+    if (this._tryRepair() && !tank.isBoat) return;
 
     if (!this.target) {
       // 闲着也是闲着：把敌方侦察兵清掉（它们会一直补人，所以总有活干）。
@@ -741,7 +743,7 @@ export class TankAI {
     // 打飞机：它飞得快，追是追不上的，所以边按巡逻路线走边朝天打。
     // 平时大家都忙着打地面目标，只有手头没活儿的（以及残局里剩下来的）才会抬头。
     if (this.target.isPlane) {
-      tank.precise = true;
+      tank.precise = !tank.isBoat;      // 炮艇没有瞄准模式，追飞机也是常速
       // 敌方地面单位已经清空 → 全员转职高炮，认真打剩下的飞机
       // 不然"必须把飞机也打光"这条规则会让残局永远收不掉
       this.mopUp = this._noEnemyGround();
@@ -875,9 +877,12 @@ export class TankAI {
       this.healing = tank.startRepair();
       if (!this.healing) return false;
     }
-    // 一定要先站住：修复期间一动就中断，顺序反了会变成每帧重启
-    tank.setMoveIntent(0, 0, 0);
-    tank.precise = true;
+    // 一定要先站住：修复期间一动就中断，顺序反了会变成每帧重启。
+    // 炮艇例外 —— 它边开边修（移动不打断），所以这里不设移动意图、也不切瞄准
+    if (!tank.isBoat) {
+      tank.setMoveIntent(0, 0, 0);
+      tank.precise = true;
+    }
     return true;
   }
 
@@ -1034,7 +1039,7 @@ export class TankAI {
     // 不然两边会在中距离上互相干瞪眼、一局拖很久。
     // 这个"想保持的距离"每辆车不一样（engagePref）：爱贴脸的一进 40 米就站住，
     // 爱隔空对射的会一直到 70 多米才停 —— 不是所有车一个脾气
-    const holdBand = !t.isScout && dist <= this.engagePref * 1.05 && dist >= CONFIG.ai.engageMin * 0.85;
+    const holdBand = !t.isScout && !tank.isBoat && dist <= this.engagePref * 1.05 && dist >= CONFIG.ai.engageMin * 0.85;
     if (!t.isPlane && holdBand) {
       this.aimHold -= dt;
       if (this.aimHold <= 0) {
@@ -1157,13 +1162,10 @@ export class TankAI {
       if (terr.losBlocked(_losFrom, _losTo)) return;
     }
 
-    // 远距离只站住打：只要还在"往自己想保持的距离压"的路上（比它 ×1.05 还远），
-    // 就不许一边跑一边放炮 —— 移动中散布是瞄准模式的 2.6 倍，纯属浪费炮弹
-    // （玩家反馈：AI 离得老远也在移动模式乱打）。
-    // 近距（贴到 engageMin 附近）豁免：那时候一边机动一边打才对；
-    // 追飞机 / 追侦察兵也豁免，那是另一套打法
-    if (!tank.precise && !t.isPlane && !t.isScout &&
-        dist > this.engagePref * CONFIG.ai.longShotMul && dist > CONFIG.ai.engageMin * 1.4) {
+    // 远距离只站住打：**只在真的还很远的时候**才按住不开炮
+    // （玩家反馈："我只是说 AI 也可以停下来，不是开炮时必须停下来 —— 真人也会边跑边打"）。
+    // 所以门槛放到交火距离的 1.4 倍以外：进了这个圈，跑着打还是站着打由它自己决定
+    if (!tank.precise && !t.isPlane && !t.isScout && dist > CONFIG.ai.engageMax * 1.4) {
       return;
     }
 

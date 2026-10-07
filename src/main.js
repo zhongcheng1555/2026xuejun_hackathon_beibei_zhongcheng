@@ -757,10 +757,10 @@ export class Game {
     this.hud.stopSpectating();
     if (this.playerSide !== 'plane') {
       this.hud.setPlayer(this.player);
-      this.hud.setMode(this.player.precise);
+      this.hud.setMode(this.player.precise, null, this.player.noAimMode);
       // 模式切换过渡结束时（Tank 里那一秒走完）回调过来刷 HUD 和战报
       this.player.onModeChange = (precise) => {
-        this.hud.setMode(precise);
+        this.hud.setMode(precise, null, this.player.noAimMode);
         this.hud.feed(
           precise ? '瞄准模式：车速三成、散布极小，虚线是炮弹实际弹道' : '移动模式：跑得快，但炮弹散布明显更大',
           precise ? 'air' : 'friendly'
@@ -1352,6 +1352,11 @@ export class Game {
   toggleMode() {
     const p = this.player;
     if (!p || !p.alive || p.isPlane) return;
+    // 炮艇没有这套：它永远常速，舰炮本身就比坦克准
+    if (p.noAimMode) {
+      this.hud.feed('炮艇没有瞄准模式：常速航行，舰炮本来就比坦克准', 'friendly');
+      return;
+    }
     if (!p.requestMode(!p.precise)) {
       if (p.modeSwitchTimer > 0) this.hud.feed('模式正在切换中，稍等一下', 'friendly');
       return;
@@ -1373,13 +1378,18 @@ export class Game {
 
     if (this.input.consumeModeToggle()) this.toggleMode();
 
-    // R：应急修复（10 秒，只能修回累计伤害的一半，期间不能动不能开炮）
+    // R：应急修复 / **再按一次退出修复**
     if (this.input.consumeRepair()) {
-      if (p.startRepair()) {
-        // 耗时是按实际要修的血量算的，所以这里报的数也是这一次的真实时长
-        this.hud.feed(`开始应急修复：${p.repairTimer.toFixed(1)} 秒内别动、别开炮`, 'air');
-      } else if (p.repairing) {
-        this.hud.feed('正在修复中…', 'friendly');
+      if (p.repairing) {
+        p.cancelRepair();
+        this.hud.feed('中断修复（已经修好的那部分保留）', 'friendly');
+      } else if (p.startRepair()) {
+        this.hud.feed(
+          p.isBoat
+            ? `开始应急修复：${p.repairTimer.toFixed(1)} 秒，这期间能开船（速度降下来）但不能开炮`
+            : `开始应急修复：${p.repairTimer.toFixed(1)} 秒内别动、别开炮（再按一次 R 可以中断）`,
+          'air'
+        );
       } else {
         this.hud.feed(`没有可修的部分了（上限 ${p.repairCeiling.toFixed(0)} 血，另一半是永久损失）`, 'danger');
       }

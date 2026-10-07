@@ -226,11 +226,19 @@ export class HUD {
   }
 
   // 移动模式 / 瞄准模式。
-  // pending 不为 null 时表示"正在切过去"：按钮上写明目标模式，一秒后才会真正生效
-  setMode(precise, pending = null) {
-    const key = `${precise}|${pending}`;
+  // pending 不为 null 时表示"正在切过去"：按钮上写明目标模式，一秒后才会真正生效。
+  // noAimMode（炮艇）时这一格只是挂牌子 —— 它没有两套模式，F 键也无效
+  setMode(precise, pending = null, noAimMode = false) {
+    const key = `${precise}|${pending}|${noAimMode}`;
     if (key === this._modeKey) return;
     this._modeKey = key;
+    if (noAimMode) {
+      this.el.modeBtn.textContent = '炮艇 · 常速';
+      this.el.modeBtn.classList.remove('switching');
+      this.el.modeBtn.classList.remove('aim');
+      this.el.crosshair.classList.remove('aim');
+      return;
+    }
     this.el.modeBtn.textContent = pending === null
       ? (precise ? '瞄准模式 · F' : '移动模式 · F')
       : `切换到${pending ? '瞄准' : '移动'}模式…`;

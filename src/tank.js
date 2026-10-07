@@ -43,6 +43,8 @@ export class Tank {
     // 炮塔俯仰上下限：坦克用全局那一套，炮艇在构造函数里换成更大的仰角（能打飞机）
     this.pitchMin = CONFIG.tank.turretPitchMin;
     this.pitchMax = CONFIG.tank.turretPitchMax;
+    // 有没有"移动 / 瞄准"两套模式。炮艇把它关掉（见 config.boat.noAimMode）
+    this.noAimMode = false;
 
     this.yaw = opts.yaw ?? rand(0, Math.PI * 2);
     this.turretYaw = this.yaw;
@@ -439,6 +441,7 @@ export class Tank {
   // 这一秒里照样能开炮、能跑（不是修复那种罚站），只是散布和车速还用原来那套。
   // 玩家反馈：切得太丝滑会让游戏不平衡（一秒内来回点两下就能白嫖两种模式的优点）
   requestMode(on) {
+    if (this.noAimMode) return false;             // 炮艇没有这两套模式（本来就打得准）
     const next = !!on;
     if (this.modeSwitchTimer > 0) return false;   // 正在切，不给连按
     if (next === this.precise) return false;
@@ -466,11 +469,12 @@ export class Tank {
 
   _updateRepair(dt) {
     if (this.repairTimer <= 0) return false;
-    // 一动车或一开炮就中断（修好的那部分保留，之后还能接着修）
+    // 一动车或一开炮就中断（修好的那部分保留，之后还能接着修）。
+    // **炮艇例外**：它是"边开边修"，移动不打断 —— 只是修的时候不能开炮（见 fire）
     const moving = this.isPlayer
       ? this.controlForward !== 0 || this.controlTurn !== 0
       : this.moveIntent.lengthSq() > 0.01;
-    if (moving) {
+    if (moving && !this.isBoat) {
       this.cancelRepair();
       return false;
     }
@@ -592,6 +596,9 @@ export class Tank {
     const prevX = this.pos.x;
     const prevZ = this.pos.z;
 
+    // 边开边修：炮艇修复期间速度降到"瞄准模式"那一档（坦克修复时必须停住，走不到这里）
+    if (this.repairing && this.isBoat) speed *= CONFIG.boat.repairMoveMul;
+
     if (speed > 0.01) {
       // 地形影响：上坡慢、下坡快，涉水更慢
       const factor = this.world.terrain.speedFactorAt(this.pos.x, this.pos.z, dirX, dirZ);
@@ -631,13 +638,14 @@ export class Tank {
       }
     }
 
-    // 贴地与随坡倾斜。两栖坦克在水里是"浮"着的：不沉到湖底，浮在水面下一点点。
-    // 炮艇永远浮着（ignoreWater）：水面线是按浪算的，岸边浪谷那一下会让"地面高于水面"，
-    // 判定成"没浮起来"就会一头扎到海底（玩家反馈：船一会儿变潜水艇、一会儿又浮上来）
+    // 贴地与随坡倾斜。
+    // **坦克不浮在水面上**：它踩的是湖边的淤泥，水没到履带也不会被托起来
+    // （玩家反馈："坦克不是漂在水面，而是踩着湖边边的淤泥"）。
+    // 只有炮艇（ignoreWater）才是浮的，跟着浪一起起伏
     const groundY = this.world.terrain.heightAt(this.pos.x, this.pos.z);
     const t2 = this.world.terrain;
     const level = t2.waterLevelAt ? t2.waterLevelAt(this.pos.x, this.pos.z) : null;
-    const floating = level !== null && (this.ignoreWater || level > groundY);
+    const floating = this.ignoreWater && level !== null;
     this.pos.y = floating ? level - this.draft : groundY;
 
     // 岩浆里会持续被烧（别的地形上这个值恒为 0）
