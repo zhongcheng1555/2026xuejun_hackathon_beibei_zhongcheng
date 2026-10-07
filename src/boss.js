@@ -138,5 +138,15 @@ export class Boss extends Tank {
     this.barrelPivot.add(this.muzzleDummy);
 
     this.wreckMat = new THREE.MeshStandardMaterial({ color: COLORS.wreck, metalness: 0.35, roughness: 0.9 });
+
+    // 整体再放大一圈（玩家要求"BOSS 体型应该更大"）。只缩放模型，
+    // 几个"跟体型走"的数值按同一个倍数跟上：炮口长度（炮管避障）、炮塔枢轴高度
+    const S = CONFIG.boss.modelScale || 1;
+    if (S !== 1) {
+      this.object.scale.setScalar(S);
+      this.barrelMaxDist *= S;
+      this.barrelDist = this.barrelMaxDist;
+      this.barrelBaseY *= S;
+    }
   }
 }

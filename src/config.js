@@ -233,14 +233,16 @@ export const CONFIG = {
   boss: {
     chance: 0.07,          // 每局出现（某一方刷一台）的概率
     health: 260,           // 普通车 100
-    radius: 5.2,           // 普通车 3.4
+    radius: 6.2,           // 普通车 3.4
+    modelScale: 1.2,       // 模型整体再放大一圈（体型是它的招牌）
     speed: 15,             // 比普通坦克（14）轻微快一点
     turnSpeed: 1.5,
     magazine: 3,           // 炮更大所以一夹更少
     loadPerShell: [2.4, 3.2],
     shellDamage: 26,       // 单发 26（普通 16）
     shellSpeed: 165,
-    homing: 1.6,           // 轻微跟踪的强度（越大转得越快；躲还是躲得开）
+    homing: 1.6,           // 跟踪的转向速率（弧度/秒）。**只转方向，不减弹速**
+                           // （玩家要求：跟不上就让它飞走，不许为了跟踪减速）
     homingRange: 95,       // 只在这个距离内跟（出了射程就直飞）
     aimErrorMove: 0.3,     // 移动模式的瞄准误差倍率（普通车是 1）
     // 随从：BOSS 出现时，如果"对手"的坦克+飞机+炮艇 ≥ escortMinFoe，

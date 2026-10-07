@@ -2,13 +2,16 @@
 
 import * as THREE from 'three';
 import { CONFIG, COLORS, TEAM } from './config.js';
-import { pointSegmentDist2 } from './utils.js';
+import { pointSegmentDist2, clamp } from './utils.js';
 
 const FORWARD = new THREE.Vector3(0, 0, 1);
 const _seg = new THREE.Vector3();
 const _hitPoint = new THREE.Vector3();
 const _dirNorm = new THREE.Vector3();
 const _mid = new THREE.Vector3();
+const _homingDir = new THREE.Vector3();
+const _homingAxis = new THREE.Vector3();
+const _homingQ = new THREE.Quaternion();
 
 export class BulletManager {
   constructor(world, max = 200) {
@@ -170,7 +173,11 @@ export class BulletManager {
       }
 
       // 2.5) BOSS 的炮弹：轻微跟踪 —— 慢慢朝最近的敌对目标偏一点。
-      //      转得很慢（见 config.boss.homing），而且只在射程内跟，躲得开
+      //      转得很慢（见 config.boss.homing），而且只在射程内跟，躲得开。
+      //
+      //      **弹速一点不减**：这里做的是"把速度向量转个方向"，不是"朝目标加速/减速"。
+      //      （玩家要求：跟踪归跟踪，飞行速度必须和平时一样；没跟到让它飞走就行。）
+      //      所以每帧只旋转 min(剩余夹角, homing × dt) 这么多，长度原封不动
       if (b.homing > 0) {
         let best = null;
         let bd = CONFIG.boss.homingRange * CONFIG.boss.homingRange;
@@ -185,9 +192,20 @@ export class BulletManager {
           if (d < bd) { bd = d; best = p; }
         }
         if (best) {
+          _homingDir.copy(best.pos).sub(b.pos);
           const sp = b.vel.length();
-          _dirNorm.copy(best.pos).sub(b.pos).normalize().multiplyScalar(sp);
-          b.vel.lerp(_dirNorm, Math.min(1, b.homing * dt));
+          if (_homingDir.lengthSq() > 1e-6 && sp > 1e-4) {
+            _homingDir.normalize();
+            const cur = _dirNorm.copy(b.vel).divideScalar(sp);
+            const ang = Math.acos(clamp(cur.dot(_homingDir), -1, 1));
+            const step = Math.min(ang, b.homing * dt);
+            _homingAxis.crossVectors(cur, _homingDir);
+            if (step > 1e-6 && _homingAxis.lengthSq() > 1e-12) {
+              _homingAxis.normalize();
+              _homingQ.setFromAxisAngle(_homingAxis, step);
+              b.vel.applyQuaternion(_homingQ);   // 只转方向，长度不变
+            }
+          }
         }
       }
 
