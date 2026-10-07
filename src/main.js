@@ -518,6 +518,9 @@ export class Game {
     const pickedPool = picked.filter(allow);
     const list = pickedPool.length ? pickedPool : BIOMES.filter(allow);
     this.currentBiome = list[randInt(0, list.length - 1)];
+    // 每边几条船：挂在「湖」上是混编小规模，挂在「海」上是大舰队
+    // （海图是大三倍的开阔水，两条船对上眼的概率约等于零）
+    this.seaPerTeam = this.currentBiome.id === 'ocean' ? CONFIG.boat.seaPerTeam : CONFIG.boat.perTeam;
 
     // 混编抽签：混编只发生在「湖」上（海是纯炮艇图）
     //   打水上战抽到湖 → 可能额外冒出坦克 / 飞机（两个各自独立，所以"都有"也会出现）
@@ -628,9 +631,9 @@ export class Game {
       this.allyTotal = this.pureAirAllyTank ? 1 : 0;
       this.enemyTotal = this.pureAirEnemyTank ? 1 : 0;
     } else if (this.pureSea) {
-      // 海战：两边各 perTeam 条船（玩家开的那条算我方一条，凑满就行）
-      this.allyTotal = CONFIG.boat.perTeam;
-      this.enemyTotal = CONFIG.boat.perTeam;
+      // 海战：两边各 seaPerTeam 条船（玩家开的那条算我方一条，凑满就行）
+      this.allyTotal = this.seaPerTeam;
+      this.enemyTotal = this.seaPerTeam;
     } else {
       const aiAlly = randInt(CONFIG.battle.allyMin, CONFIG.battle.allyMax);
       this.allyTotal = this.playerSide === 'tank' ? aiAlly + 1 : aiAlly;
@@ -646,14 +649,14 @@ export class Game {
     this.edgeWarnTimer = 0;
     if (this.pureSea) {
       // 水上战：只有船。你在西边、敌人在东边，隔着整片水面互相找
-      const spawns = waterSpawns(this.terrain, TEAM.ALLY, CONFIG.boat.perTeam);
+      const spawns = waterSpawns(this.terrain, TEAM.ALLY, this.seaPerTeam);
       this.player = this._spawnBoat(TEAM.ALLY, spawns[0], 0, true);
       this.lookYaw = 0;
       this.lookPitch = CONFIG.camera.defaultPitch;
       this.followYaw = this.player.yaw;
       this.camYaw = this.followYaw;
       this.camPitch = this.lookPitch;
-      for (let i = 1; i < CONFIG.boat.perTeam; i++) {
+      for (let i = 1; i < this.seaPerTeam; i++) {
         this._spawnBoat(TEAM.ALLY, spawns[i], 0, false);
       }
       // 湖上混编：我方额外几辆坦克（在岸上，船在水里 —— 同一场仗两种打法）
@@ -768,7 +771,7 @@ export class Game {
       air: this.planes.list.some((p) => !p.retired),
     });
     if (this.pureSea) {
-      const bits = [`双方各 ${CONFIG.boat.perTeam} 艘炮艇`];
+      const bits = [`双方各 ${this.seaPerTeam} 艘炮艇`];
       if (this.mixTanks) bits.push(`坦克 ${CONFIG.boat.lakeMixTanks} 辆`);
       if (this.mixPlanes) bits.push(`飞机 ${CONFIG.boat.lakeMixPlanes} 架`);
       this.hud.banner(

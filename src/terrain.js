@@ -292,8 +292,8 @@ export class Terrain {
       // 原来固定 3 圈 × 32 段 —— 海面半径 370 多米，一圈之间隔着上百米，
       // 浪在网格上根本立不起来（玩家反馈：海面看不到浪）。
       // 26 米一格配 120 米左右的长涌浪，采样够用、顶点数也还便宜
-      const RINGS_N = clamp(Math.round(L.rx / 26), 3, 16);
-      const N = clamp(Math.round((Math.PI * 2 * L.rx) / 26), 32, 128);
+      const RINGS_N = clamp(Math.round(L.rx / 26), 3, 26);
+      const N = clamp(Math.round((Math.PI * 2 * L.rx) / 26), 32, 160);
       const verts = [];
       const base = [];                  // 每个顶点的 {x, z, r}：算波浪用
       const push = (x, z, r) => {

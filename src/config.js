@@ -114,7 +114,8 @@ export const CONFIG = {
     magazine: 4,            // 火力偏慢：一夹 4 发
     loadPerShell: 2.6,      // 玩家：每颗压弹要多久
     aiLoadPerShell: [3.0, 4.0],
-    perTeam: 2,             // 海战里每边几条船（玩家开的那条算我方一条）
+    perTeam: 2,             // 湖上混编战里每边几条船（玩家开的那条算我方一条）
+    seaPerTeam: 6,          // 海图每边几条船 —— 那么大一片水，两条船根本碰不上
     draft: 0.9,             // 吃水：船体沉到水面下多少
     keepIn: 0.94,           // 船最多跑到"真实水线的这个比例处"（免得开上岸）
     spawnFrac: 0.7,         // 出生点摆在"真实水线的几成处"（越靠里越稳在水里）
@@ -722,7 +723,8 @@ export const BIOMES = [
   {
     id: 'ocean',
     name: '海',
-    size: 820,
+    // 真正的海：比沙漠（900）大三倍上下 —— 一眼望不到边的那种开阔
+    size: 2600,
     heightScale: 9,
     noiseScale: 0.0035,
     ridge: 1.4,
@@ -730,24 +732,28 @@ export const BIOMES = [
     trees: 0, rocks: 0, bushes: 0, sandbags: 0,
     // 礁岛：从海底鼓起来的几座圆包，顶露出水面。船绕着走（登记成碰撞体），
     // 飞机飞得高，直接从上面过。半径和"露出水面多高"都按地图尺寸给
-    islands: { count: 5, r: [0.032, 0.06], above: [7, 16], minGap: 0.09 },
-    // 海图太大了（rx 377m），出生点按湖图的比例摆会让两军隔 400 多米 —— 单独收近一点
-    boatSpawnFrac: 0.45,
+    islands: { count: 9, r: [0.032, 0.06], above: [7, 16], minGap: 0.06 },
+    // 地图这么大，出生点不能再按湖图的比例摆 —— 两军会隔着上千米。收到两成左右
+    boatSpawnFrac: 0.2,
+    // 视野倍率：图大三倍，AI 的搜索半径也要跟着放大，不然两军永远碰不上
+    viewMul: 2.6,
     ground: { base: 0x9c8a68, second: 0xb09a74, rock: 0x7f7a6e, high: 0xc4ad86 },
     parts: { leaf: 0x3f6f2c, trunk: 0x55402a, rock: 0x837a70, bush: 0x4d7a34, sandbag: 0x8a7c58,
       lily: 0x4f8f3c, reed: 0x7f9a4a, weed: 0x2f6b4a },
     sky: { top: 0x2a6cb0, bottom: 0xd2e8f4 },
-    fog: { color: 0xc6dcea, near: 340, far: 1260 },
+    fog: { color: 0xc6dcea, near: 900, far: 2600 },
     light: { sun: 0xfff2dc, sunIntensity: 1.7, hemi: 0.9, ambient: 0.45 },
     stream: { chance: 0, width: 10, depth: 1.2 },
     // 真正的海：一片几乎占满战场的大水，只散着几座礁岛。
     // 只有炮艇能在这儿跑 —— 这里不出坦克、不出飞机（坦克掉进来就废了）
     lake: {
       chance: 1, count: 1, spots: [[0, 0]],
-      rx: 0.46, rz: 0.46, depth: 30,
+      // 0.72：水面几乎铺满整张图，四周只留一圈远远的岸（雾里几乎看不见），
+      // 这样才有"一眼望不到边"的海，而不是地图中间一个大湖
+      rx: 0.72, rz: 0.72, depth: 38,
       color: 0x1f5f8c, speedMul: 0.36,
-      waveAmp: 1.6,       // 浪高：海面有真正的涌浪（低模，两条正弦叠一下）
-      waveScale: 0.052,   // 波长：2π/0.052 ≈ 120 米的长涌浪 —— 又长又慢，一眼看得出在起伏
+      waveAmp: 2.2,       // 浪高：海面有真正的涌浪（低模，两条正弦叠一下）
+      waveScale: 0.025,   // 波长：2π/0.025 ≈ 250 米的大涌浪 —— 又长又慢，一眼看得出在起伏
     },
   },
 ];

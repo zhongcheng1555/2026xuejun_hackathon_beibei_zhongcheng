@@ -109,20 +109,23 @@ export class TankAI {
     return best;
   }
 
-  // 搜索范围：平时 200m；到了残局就放大，不然幸存者会各自在地图上逛，谁也碰不到谁
+  // 搜索范围：平时 200m；到了残局就放大，不然幸存者会各自在地图上逛，谁也碰不到谁。
+  // 另外地形可以整体给一个倍率（terrain.biome.viewMul）：海图比沙漠大三倍，
+  // 视野不跟着放大的话，两支舰队在那么大片水上永远碰不上
   _searchRange() {
+    const mul = (this.world.terrain && this.world.terrain.biome && this.world.terrain.biome.viewMul) || 1;
     let foes = 0;
     for (const t of this.world.tanks) {
       if (t.alive && t.team !== this.tank.team) foes++;
       if (foes > 2) break;
     }
-    if (foes <= 0) return CONFIG.ai.viewRange;   // 只剩飞机了，交给打飞机那套逻辑
+    if (foes <= 0) return CONFIG.ai.viewRange * mul;   // 只剩飞机了，交给打飞机那套逻辑
     if (foes === 1) {
       // 就剩最后一辆了：直接放到整张地图（对角线约 2.83×半径，这里给 3 倍留点余量）。
       // 不然两个幸存者各自缩在对角，隔着 500m 互相看不见，仗永远打不完
-      return Math.max(CONFIG.ai.lateGameViewRange, this.world.terrain.playable * 3);
+      return Math.max(CONFIG.ai.lateGameViewRange, this.world.terrain.playable * 3) * mul;
     }
-    return foes === 2 ? CONFIG.ai.lateGameViewRange : CONFIG.ai.viewRange;
+    return (foes === 2 ? CONFIG.ai.lateGameViewRange : CONFIG.ai.viewRange) * mul;
   }
 
   // 敌方地面单位是否已经清空（只剩飞机）——残局就是靠这个判断该不该转职打飞机
