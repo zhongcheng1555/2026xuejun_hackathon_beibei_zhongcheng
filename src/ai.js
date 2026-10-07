@@ -29,6 +29,9 @@ export class TankAI {
     // 交火节奏：停车开火 / 挪一段（见 config.ai.aimHold）。从"停车"那一段开始
     this.aimHold = rand(CONFIG.ai.aimHold[0], CONFIG.ai.aimHold[1]);
     this.aimHoldOn = true;
+    // 这辆车自己"想保持的交火距离"：在 engageHold 附近浮动，有的爱贴脸、有的爱隔空对射。
+    // 远一点的那一档，会在更远处就停下来瞄准 —— 而不是一路小跑乱打
+    this.engagePref = CONFIG.ai.engageHold * rand(CONFIG.ai.engagePrefMul[0], CONFIG.ai.engagePrefMul[1]);
     this.movedAccum = 0;      // 窗口内实际挪了多少米
     this.blockedAccum = 0;    // 窗口内贴着障碍物的时间（判"卡住"的第二个条件）
     this.healing = false;   // 正在应急修复
@@ -80,6 +83,15 @@ export class TankAI {
 
   _distanceTo(t) {
     return Math.hypot(t.pos.x - this.tank.pos.x, t.pos.z - this.tank.pos.z);
+  }
+
+  // 从炮口高度看过去，这辆车是不是被楼 / 断墙 / 树篱 / 岩壁挡住了
+  _losBlockedTo(t) {
+    const terr = this.world.terrain;
+    if (!terr.losBlocked) return false;
+    _losFrom.set(this.tank.pos.x, this.tank.pos.y + 2.4, this.tank.pos.z);
+    _losTo.set(t.pos.x, t.pos.y + 1.7, t.pos.z);
+    return terr.losBlocked(_losFrom, _losTo);
   }
 
   // 最近的一辆敌方**坦克**（不看飞机）。换目标时用：贴到脸前的敌人优先级最高
@@ -208,13 +220,28 @@ export class TankAI {
       }
     }
 
+    // 地面目标：射程内按距离排队，**优先挑看得见的那个**。
+    // 玩家反馈：AI 常常死咬"最近但被楼挡住"的那辆，眼前明明有辆打得着的却不理 ——
+    // 于是隔着一栋楼互相绕圈。所以从最近的开始找，第一个打得通的就用它；
+    // 全被挡住（迷宫里很常见）才退回最近的，跟以前一样推进到能打的位置
+    const cands = [];
     for (const t of this.world.tanks) {
       if (!t.alive || t === tank) continue;
       if (t.team === tank.team) continue;
       const d = this._distanceTo(t);
-      if (d < bestDist && d <= range) {
-        bestDist = d;
-        best = t;
+      if (d <= range) cands.push({ t, d });
+    }
+    if (cands.length) {
+      cands.sort((a, b) => a.d - b.d);
+      let pick = cands[0];
+      if (cands.length > 1) {
+        for (const c of cands) {
+          if (!this._losBlockedTo(c.t)) { pick = c; break; }
+        }
+      }
+      if (pick.d < bestDist) {
+        bestDist = pick.d;
+        best = pick.t;
       }
     }
 
@@ -622,7 +649,9 @@ export class TankAI {
       const near = this._nearestFoeTank();
       if (near && near !== this.target) {
         const nd = this._distanceTo(near);
-        if (nd < curD * 0.6 && nd < CONFIG.ai.engageMax) {
+        // 多一条：贴到脸前的那辆得**看得见**才值得为它换目标。
+        // 不然隔着一栋楼擦身而过的车也会把眼前的目标抢走（玩家反馈过这个）
+        if (nd < curD * 0.6 && nd < CONFIG.ai.engageMax && !this._losBlockedTo(near)) {
           this.target = near;
           this.reactionLeft = Math.min(this.reactionLeft, 0.5);
         }
@@ -955,9 +984,11 @@ export class TankAI {
     // 玩家反馈：AI 攻击时从来没停过，而且一直挂着移动模式（移动中散布 2.6 倍），
     // 所以老是打不准。这里给它一个"停车开火 ↔ 挪一段"的节奏：
     // 停车那一段切瞄准模式（散布小、也走不动），挪动那一段照常跑。
-    // 只在**贴到交火距离**才停（engageHold 稍微外一点）：再远就先全速压上去，
-    // 不然两边会在中距离上互相干瞪眼、一局拖很久
-    const holdBand = !t.isScout && dist <= CONFIG.ai.engageHold * 1.05 && dist >= CONFIG.ai.engageMin * 0.85;
+    // 只在**贴到自己想保持的距离**才停：再远就先全速压上去，
+    // 不然两边会在中距离上互相干瞪眼、一局拖很久。
+    // 这个"想保持的距离"每辆车不一样（engagePref）：爱贴脸的一进 40 米就站住，
+    // 爱隔空对射的会一直到 70 多米才停 —— 不是所有车一个脾气
+    const holdBand = !t.isScout && dist <= this.engagePref * 1.05 && dist >= CONFIG.ai.engageMin * 0.85;
     if (!t.isPlane && holdBand) {
       this.aimHold -= dt;
       if (this.aimHold <= 0) {
@@ -993,7 +1024,7 @@ export class TankAI {
         this.strafeTimer = rand(1.6, 3.6);
         this.strafeSign *= -1;
       }
-      const gap = clamp((dist - CONFIG.ai.engageHold) * 0.04, -0.6, 0.9);
+      const gap = clamp((dist - this.engagePref) * 0.04, -0.6, 0.9);
       mx = -uz * this.strafeSign + ux * gap;
       mz = ux * this.strafeSign + uz * gap;
     }
@@ -1078,6 +1109,16 @@ export class TankAI {
       _losFrom.set(tank.pos.x, tank.pos.y + 2.4, tank.pos.z);
       _losTo.set(t.pos.x, t.pos.y + 1.7, t.pos.z);
       if (terr.losBlocked(_losFrom, _losTo)) return;
+    }
+
+    // 远距离只站住打：只要还在"往自己想保持的距离压"的路上（比它 ×1.05 还远），
+    // 就不许一边跑一边放炮 —— 移动中散布是瞄准模式的 2.6 倍，纯属浪费炮弹
+    // （玩家反馈：AI 离得老远也在移动模式乱打）。
+    // 近距（贴到 engageMin 附近）豁免：那时候一边机动一边打才对；
+    // 追飞机 / 追侦察兵也豁免，那是另一套打法
+    if (!tank.precise && !t.isPlane && !t.isScout &&
+        dist > this.engagePref * CONFIG.ai.longShotMul && dist > CONFIG.ai.engageMin * 1.4) {
+      return;
     }
 
     if (tank.fire()) {
