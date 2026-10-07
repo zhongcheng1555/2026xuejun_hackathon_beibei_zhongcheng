@@ -26,6 +26,9 @@ export class TankAI {
     this.burstLeft = randInt(CONFIG.tank.aiBurst[0], CONFIG.tank.aiBurst[1]);
     this.burstPause = 0;
     this.stuckTimer = 0;      // 统计窗口计时
+    // 交火节奏：停车开火 / 挪一段（见 config.ai.aimHold）。从"停车"那一段开始
+    this.aimHold = rand(CONFIG.ai.aimHold[0], CONFIG.ai.aimHold[1]);
+    this.aimHoldOn = true;
     this.movedAccum = 0;      // 窗口内实际挪了多少米
     this.blockedAccum = 0;    // 窗口内贴着障碍物的时间（判"卡住"的第二个条件）
     this.healing = false;   // 正在应急修复
@@ -667,9 +670,13 @@ export class TankAI {
       if (this.mopUp) tank.aimSpeedMul = 1;
       this.patrolTimer -= dt;
       // 搜剿阶段直接追着飞机的航迹跑（跟到下面去打，距离近了才打得准）；
-      // 平时按巡逻路线走 —— 追也追不上，还会把自己送到敌人炮口下
-      const tx = this.mopUp ? this.target.pos.x : this.patrolPoint.x;
-      const tz = this.mopUp ? this.target.pos.z : this.patrolPoint.z;
+      // 平时按巡逻路线走 —— 追也追不上，还会把自己送到敌人炮口下。
+      // **迷宫地形例外**：花园/山谷里追飞机是白费劲（走廊拐来拐去，飞机从头顶过），
+      // 而且很容易顶在树篱上变成"对着墙开炮"。所以迷宫里只巡逻 + 朝天打
+      const inMaze = !!(this.world.terrain && this.world.terrain.maze);
+      const chase = this.mopUp && !inMaze;
+      const tx = chase ? this.target.pos.x : this.patrolPoint.x;
+      const tz = chase ? this.target.pos.z : this.patrolPoint.z;
       const ax = tx - tank.pos.x;
       const az = tz - tank.pos.z;
       if (Math.hypot(ax, az) < 18 || this.patrolTimer <= 0) {
@@ -706,9 +713,10 @@ export class TankAI {
     const lastStand = lowHealth && this.retreatTime >= CONFIG.ai.maxRetreat;
     if (lowHealth && !lastStand) this._retreat(dt, dist);
     else this._engage(dt, dist);
-    // 交火时切瞄准模式：走得慢但打得准；撤退、赶路时切回移动模式。
-    // 追侦察兵例外 —— 它跑得快又只有一滴血，全速压过去比端着慢慢瞄靠谱
-    tank.precise = !this.target.isScout && !lowHealth && dist < CONFIG.ai.engageMax * 1.15;
+    // 瞄准模式由 _engage 自己定（只有"停车开火"那一段才是瞄准模式）。
+    // 这里只兜底两条：追侦察兵、以及撤退时不端着慢慢瞄 ——
+    // 侦察兵跑得快又只有一滴血，全速压过去比站住瞄靠谱
+    if (lowHealth || this.target.isScout) tank.precise = false;
     this._aimAndFire(dt, dist);
   }
 
@@ -882,6 +890,10 @@ export class TankAI {
   _engage(dt, dist) {
     const tank = this.tank;
     const t = this.target;
+    // 默认按"边走边打"来：移动模式。只有下面那段"停车开火"才切瞄准模式。
+    // 放在这里是因为下面有几个提前 return（迷宫寻路 / 脱困 / 隔墙压过去），
+    // 不在这里复位的话，那些分支会带着上一次的瞄准模式慢慢挪
+    tank.precise = false;
     // 迷宫地形：目标不在同一格，就先沿着走廊往下一格开（直线冲只会顶墙）
     const nav = this._mazeNav(dt, t.pos.x, t.pos.z);
     if (nav) {
@@ -933,6 +945,32 @@ export class TankAI {
         this._move(ix, iz, 1);
         return;
       }
+    }
+    // 看得见、距离也合适 —— **停下来打**。
+    // 玩家反馈：AI 攻击时从来没停过，而且一直挂着移动模式（移动中散布 2.6 倍），
+    // 所以老是打不准。这里给它一个"停车开火 ↔ 挪一段"的节奏：
+    // 停车那一段切瞄准模式（散布小、也走不动），挪动那一段照常跑。
+    // 只在**贴到交火距离**才停（engageHold 稍微外一点）：再远就先全速压上去，
+    // 不然两边会在中距离上互相干瞪眼、一局拖很久
+    const holdBand = !t.isScout && dist <= CONFIG.ai.engageHold * 1.05 && dist >= CONFIG.ai.engageMin * 0.85;
+    if (!t.isPlane && holdBand) {
+      this.aimHold -= dt;
+      if (this.aimHold <= 0) {
+        this.aimHoldOn = !this.aimHoldOn;
+        this.aimHold = this.aimHoldOn
+          ? rand(CONFIG.ai.aimHold[0], CONFIG.ai.aimHold[1])
+          : rand(CONFIG.ai.aimMove[0], CONFIG.ai.aimMove[1]);
+      }
+      if (this.aimHoldOn) {
+        tank.precise = true;      // 瞄准模式：散布极小（代价是走不动，反正也停着）
+        this.moving = false;      // 站住了就不该再吃"移动中偏差"
+        this._move(0, 0, 0);
+        return;
+      }
+      tank.precise = false;
+    } else {
+      this.aimHoldOn = true;      // 出了这个距离段就重新从"停车"那一段开始
+      this.aimHold = rand(CONFIG.ai.aimHold[0], CONFIG.ai.aimHold[1]);
     }
     if (dist > CONFIG.ai.engageMax) {
       mx = ux;
