@@ -1019,9 +1019,10 @@ export class Game {
   _spawnBossWithEscorts() {
     const team = Math.random() < 0.5 ? TEAM.ALLY : TEAM.ENEMY;
     const foe = team === TEAM.ALLY ? TEAM.ENEMY : TEAM.ALLY;
-    const foeCount =
-      this.tanks.filter((t) => t.alive && t.team === foe).length +
-      this.planes.list.filter((p) => !p.retired && p.alive && p.team === foe).length;
+    const countOf = (tm) =>
+      this.tanks.filter((t) => t.alive && t.team === tm).length +
+      this.planes.list.filter((p) => !p.retired && p.alive && p.team === tm).length;
+    const foeCount = countOf(foe);
 
     const boss = new Boss(this, {
       team,
@@ -1034,9 +1035,17 @@ export class Game {
     boss.ai = ai;
     this.ais.push(ai);
     this.boss = boss;
+    // **BOSS 顶掉本方一辆普通 AI 坦克**：它是"升级"，不是"多一个人"。
+    // 原来 BOSS 是纯加人，再加 1~2 个随从，那一方凭空多出 1~3 个单位 ——
+    // 实测我方 12 : 敌方 8，40 秒就打赢（玩家反馈"没过一分钟我们就赢了"）
+    this._bossReplacesTank(team);
 
     const escorts = [];
-    if (foeCount >= CONFIG.boss.escortMinFoe) {
+    // 随从只在**对手真的比自己人多**的时候发（老规矩：对手 ≥ escortMinFoe）。
+    // 光看"对手 ≥8"不够 —— 两边本来就是各 6 坦克 + 2~3 飞机，
+    // 那个条件每局都成立，等于必有随从，凭空又多 1~2 个单位
+    const ownCount = countOf(team);
+    if (foeCount >= CONFIG.boss.escortMinFoe && foeCount > ownCount) {
       const kinds = ['tank'];
       if (this.terrain.lakes.length) kinds.push('boat');
       if (this.planes.list.some((p) => !p.retired)) kinds.push('plane');
@@ -1065,6 +1074,24 @@ export class Game {
       );
     }
     this.updateCounts();
+  }
+
+  // BOSS 顶掉本方一辆普通 AI 坦克（不动玩家、不动炮艇）。
+  // 找不到可顶的（比如本方就一辆车）就算了 —— 那种局 BOSS 就当白捡的
+  _bossReplacesTank(team) {
+    for (let i = this.tanks.length - 1; i >= 0; i--) {
+      const t = this.tanks[i];
+      if (!t.alive || t.team !== team || t.isPlayer || t.isBoss || t.isBoat) continue;
+      const ai = t.ai;
+      t.dispose();
+      this.tanks.splice(i, 1);
+      if (ai) {
+        const k = this.ais.indexOf(ai);
+        if (k >= 0) this.ais.splice(k, 1);
+      }
+      return true;
+    }
+    return false;
   }
 
   // 纯空战里那辆坦克 20 秒才能打一炮：弹夹压成 1 发、装填拉长。
