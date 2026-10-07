@@ -17,14 +17,12 @@ export class Boat extends Tank {
     this.isBoat = true;
     this.name = opts.name || `炮艇${this.id}`;
 
-    // 海战的数值：皮薄、炮慢、跑得快
+    // 海战的数值：皮薄、炮慢、跑得快（航速 / 转向玩家和 AI 共用，见 config）
     this.maxHealth = CONFIG.boat.health;
     this.health = this.maxHealth;
     this.radius = CONFIG.boat.radius;
     this.speed = CONFIG.boat.speed;
-    this.aiSpeed = CONFIG.boat.aiSpeed;
     this.turnSpeed = CONFIG.boat.turnSpeed;
-    this.playerTurnSpeed = CONFIG.boat.playerTurnSpeed;
     this.magazine = CONFIG.boat.magazine;
     this.rounds = this.magazine;
     this.loadTime = this.isPlayer

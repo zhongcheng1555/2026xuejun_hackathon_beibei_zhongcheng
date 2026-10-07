@@ -22,10 +22,12 @@ export const CONFIG = {
   tank: {
     health: 100,
     radius: 3.4,
-    speed: 15,           // 玩家最高速度
-    aiSpeed: 12.5,
-    turnSpeed: 1.6,      // AI 车体转向（弧度/秒）
-    playerTurnSpeed: 1.8,// 玩家车体转向，能原地掉头（原来 2.4 太灵活了，调慢）
+    // 移动速度 / 车体转向：**玩家和 AI 共用这一个数**。
+    // 以前是分开的两份（玩家 15 / AI 12.5，转向 1.8 / 1.6），等于玩家快 19% ——
+    // 再加上 AI 每帧还要乘"意图强度"和"转向对齐度"，机动性是全面吃亏。
+    // 只留一份就不用担心哪天又飘开；取值是两边原来的中间值
+    speed: 14,           // 最高速度（米/秒）
+    turnSpeed: 1.7,      // 车体转向（弧度/秒），玩家能原地掉头、AI 边走边转
     reverseSpeed: 0.6,   // 倒车速度比例
     turretSpeed: 2.3,    // 炮塔转向
     turretPitchSpeed: 1.5,
@@ -102,10 +104,10 @@ export const CONFIG = {
   boat: {
     health: 70,             // 比坦克（100）脆
     radius: 3.4,
-    speed: 19,              // 玩家：水面航速
-    aiSpeed: 16,
-    turnSpeed: 1.05,        // AI 转船头
-    playerTurnSpeed: 2.0,   // 玩家 A/D 转船头
+    // 航速 / 船头转向：和坦克一样，玩家和 AI **共用**（原来 19 / 16、2.0 / 1.05，
+    // 玩家船头转向快了将近一倍）。取中间值
+    speed: 17.5,
+    turnSpeed: 1.5,
     magazine: 4,            // 火力偏慢：一夹 4 发
     loadPerShell: 2.6,      // 玩家：每颗压弹要多久
     aiLoadPerShell: [3.0, 4.0],

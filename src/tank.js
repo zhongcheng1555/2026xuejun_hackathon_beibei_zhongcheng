@@ -27,11 +27,10 @@ export class Tank {
     this.radius = CONFIG.tank.radius;
     this.alive = true;
     this.kills = 0;
-    // 行驶参数：坦克用这套默认值，炮艇之类的子类在构造函数里覆盖（见 boat.js）
+    // 行驶参数：坦克用这套默认值，炮艇之类的子类在构造函数里覆盖（见 boat.js）。
+    // speed / turnSpeed 玩家和 AI 是**同一个数** —— 见 config 里那一段说明
     this.speed = CONFIG.tank.speed;
-    this.aiSpeed = CONFIG.tank.aiSpeed;
     this.turnSpeed = CONFIG.tank.turnSpeed;
-    this.playerTurnSpeed = CONFIG.tank.playerTurnSpeed;
     this.draft = CONFIG.tank.waterDraft;   // 浮在水里时沉下去多少
     this.barrelBaseY = 2.97;               // 炮塔枢轴离地多高（炮管避障用）
 
@@ -505,7 +504,7 @@ export class Tank {
 
     if (isPlayer) {
       // 坦克开法：A/D 原地转车体（停下来也能原地掉头），W/S 沿车头方向前进/后退
-      this.yaw = wrapAngle(this.yaw - this.controlTurn * this.playerTurnSpeed * dt);
+      this.yaw = wrapAngle(this.yaw - this.controlTurn * this.turnSpeed * dt);
       const fwd = this.controlForward;
       if (fwd !== 0) {
         speed = fwd > 0 ? this.speed : this.speed * CONFIG.tank.reverseSpeed;
@@ -516,9 +515,9 @@ export class Tank {
       }
     } else if (reverseIntent) {
       // AI 倒车：不转头，直接沿车尾方向退。
-      // 掉头要 1.65 秒，泡在岩浆里被石头顶住的时候等不起那么久 —— 直着退最快。
+      // 掉头要一秒多，泡在岩浆里被石头顶住的时候等不起那么久 —— 直着退最快。
       const mag = Math.min(1, this.moveIntent.length());
-      speed = this.aiSpeed * mag * CONFIG.tank.reverseSpeed;
+      speed = this.speed * mag * CONFIG.tank.reverseSpeed;
       dirX = -Math.sin(this.yaw);
       dirZ = -Math.cos(this.yaw);
     } else {
@@ -528,7 +527,7 @@ export class Tank {
         const targetYaw = Math.atan2(this.moveIntent.x, this.moveIntent.z);
         this.yaw = turnTowards(this.yaw, targetYaw, this.turnSpeed * dt);
         const align = Math.cos(wrapAngle(targetYaw - this.yaw));
-        speed = this.aiSpeed * mag * clamp(align, 0.2, 1);
+        speed = this.speed * mag * clamp(align, 0.2, 1);
         if (this.precise) speed *= this.aimSpeedMul;  // AI 进瞄准模式也会变慢（追飞机时例外）
         dirX = Math.sin(this.yaw);
         dirZ = Math.cos(this.yaw);
