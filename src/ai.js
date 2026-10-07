@@ -49,8 +49,9 @@ export class TankAI {
     this.lavaStuck = 0;   // 泡在岩浆里又走不动的累计时间
     this.reverseHold = 0; // 倒车保持时间（倒起来就至少倒一会儿，免得来回抖）
     this.retreatTime = 0; // 已经连续撤退了多久（甩不掉追兵就回头打）
-    // 这辆坦克会不会"抬头防空"（一部分会，见 config 里 antiairChance 的说明）
-    this.antiair = Math.random() < CONFIG.plane.antiairChance;
+    // 这辆坦克会不会"抬头防空"（一部分会，见 config 里 antiairChance 的说明）。
+    // 炮艇例外：它本来就是防空平台，仰角也比坦克大 —— 全都抬头，不用抽签
+    this.antiair = this.tank.isBoat ? true : Math.random() < CONFIG.plane.antiairChance;
     // 夜战里会隔一阵子"看不见"天上的目标（_airBlind 为真时完全不看天上）
     this._airBlind = false;
     this._blindTimer = 0;
@@ -92,6 +93,30 @@ export class TankAI {
     _losFrom.set(this.tank.pos.x, this.tank.pos.y + 2.4, this.tank.pos.z);
     _losTo.set(t.pos.x, t.pos.y + 1.7, t.pos.z);
     return terr.losBlocked(_losFrom, _losTo);
+  }
+
+  // 附近有没有队友正在挨打？返回"正打他的那个敌人"（打不着的不算）。
+  // 用途：队友被咬住的时候，附近的队友去切断那个追兵的注意力 ——
+  // 一个人后退、旁边有人接应，队伍才像个队伍（玩家反馈"我方要有配合"）
+  _findComradeAttacker() {
+    const R = CONFIG.ai.helpAllyRange;
+    if (!R) return null;
+    const tank = this.tank;
+    const range = this._searchRange();
+    let best = null;
+    let bestD = Infinity;
+    for (const m of this.world.tanks) {
+      if (m === tank || !m.alive || m.team !== tank.team) continue;
+      if (m.lastHitTimer <= 0) continue;                    // 最近没挨打，不用管
+      const a = m.lastHitBy;
+      if (!a || !a.alive || a.team === tank.team || a.isPlane) continue;
+      // 只在"这辆队友离我不远"时才去接应，不然等于满地图乱跑
+      if (Math.hypot(m.pos.x - tank.pos.x, m.pos.z - tank.pos.z) > R) continue;
+      const d = this._distanceTo(a);
+      if (d > range) continue;                              // 打不着也没办法
+      if (d < bestD) { bestD = d; best = a; }
+    }
+    return best;
   }
 
   // 最近的一辆敌方**坦克**（不看飞机）。换目标时用：贴到脸前的敌人优先级最高
@@ -675,6 +700,24 @@ export class TankAI {
       if (!this.target || this._distanceTo(attacker) < this._distanceTo(this.target)) {
         this.target = attacker;
         this.reactionLeft = Math.min(this.reactionLeft, 0.7);
+      }
+    }
+
+    // 队友被打了就去接应：附近有队友正在挨打，就换成"打它的那个敌人"。
+    // 这是"自保优先"之上的团队行为 —— 自己也在挨打时用不着管别人（上一段已经处理了）。
+    // 换的条件：那个追兵**比我现在的目标更近**，或者至少落在正常交火距离内
+    // （后者是让"队友在几米外被打、我却盯着一个远处目标"这种情况能纠正过来）
+    // 但自己正挨打、而且已经咬上打自己的那辆时，就别被队友的事抢走目标 —— 先自保
+    const busySelf = tank.lastHitTimer > 0 && this.target === tank.lastHitBy;
+    if (!busySelf && this.target && !this.target.isPlane) {
+      const helper = this._findComradeAttacker();
+      if (helper && helper !== this.target) {
+        const hd = this._distanceTo(helper);
+        const cd = this._distanceTo(this.target);
+        if (hd < cd || hd <= CONFIG.ai.engageMax) {
+          this.target = helper;
+          this.reactionLeft = Math.min(this.reactionLeft, 0.6);
+        }
       }
     }
 

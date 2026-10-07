@@ -450,9 +450,11 @@ export class Game {
     const k = clamp((this.sunBreakT - 0.5) / S.nightTime, 0, 1);
     if (k <= 0) return;
     const lerp = (a, c) => a + (c - a) * k;
-    this.sun.intensity = lerp(d.sun, d.sun * n.sunMul * 0.3);
-    this.hemi.intensity = lerp(d.hemi, d.hemi * n.hemiMul * 0.45);
-    this.ambient.intensity = lerp(d.ambient, d.ambient * n.ambientMul * 0.55);
+    // 碎掉之后只是"入夜"，不是"熄灯"：比普通夜战再暗一点点就够，
+    // 原来压到普通夜战的三成，屏幕黑得什么都看不见
+    this.sun.intensity = lerp(d.sun, d.sun * n.sunMul * 0.8);
+    this.hemi.intensity = lerp(d.hemi, d.hemi * n.hemiMul * 0.9);
+    this.ambient.intensity = lerp(d.ambient, d.ambient * n.ambientMul * 0.95);
     this.scene.fog.color.copy(d.fog).lerp(_deepFog, k);
     this.scene.fog.near = lerp(d.fogNear, d.fogNear * n.fogScale[0]);
     this.scene.fog.far = lerp(d.fogFar, d.fogFar * n.fogScale[1]);
@@ -607,6 +609,7 @@ export class Game {
 
     this.stats = {
       kills: 0,
+      allyKills: 0,
       friendlyKills: 0,
       planesDown: 0,
       allyLost: 0,
@@ -1107,6 +1110,10 @@ export class Game {
         this.stats.kills++;
         this.hud.feed(`你击毁了敌方 ${tank.name}`, 'kill');
         this.hud.hitMark('kill');
+      } else if (killer && killer.team === TEAM.ALLY) {
+        // 队友打掉的也算"我方战果"。不单独播报（队友干了什么不在战报里），
+        // 但顶上那格会把它加进去 —— 不然玩家根本看不见队友的贡献
+        this.stats.allyKills++;
       }
     }
     this.updateCounts();
@@ -1318,6 +1325,7 @@ export class Game {
       allyAir: this.planes.list.filter((p) => p.alive && p.team === TEAM.ALLY).length,
       enemyAir: this.planes.list.filter((p) => p.alive && p.team === TEAM.ENEMY).length,
       kills: this.stats.kills,
+      allyKills: this.stats.allyKills,
       friendlyKills: this.stats.friendlyKills,
       planesDown: this.stats.planesDown,
     });

@@ -11,13 +11,21 @@ import { CONFIG, COLORS, TEAM } from './config.js';
 import { Tank } from './tank.js';
 import { rand, clamp } from './utils.js';
 
+// 齐射时复用的临时量（别每帧 new）
+const _dir = new THREE.Vector3();
+const _side = new THREE.Vector3();
+const _mz = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _quat = new THREE.Quaternion();
+
 export class Boat extends Tank {
   constructor(world, opts = {}) {
     super(world, { ...opts, ignoreWater: true });
     this.isBoat = true;
     this.name = opts.name || `炮艇${this.id}`;
 
-    // 海战的数值：皮薄、炮慢、跑得快（航速 / 转向玩家和 AI 共用，见 config）
+    // 炮艇的数值（见 config.boat 那一段的定位说明）：
+    //   快、皮薄、转向笨；一轮齐射糊脸 + 舰炮准 + 能抬头打飞机
     this.maxHealth = CONFIG.boat.health;
     this.health = this.maxHealth;
     this.radius = CONFIG.boat.radius;
@@ -30,6 +38,13 @@ export class Boat extends Tank {
       : rand(CONFIG.boat.aiLoadPerShell[0], CONFIG.boat.aiLoadPerShell[1]);
     this.draft = CONFIG.boat.draft;
     this.barrelBaseY = 2.9;
+    // —— 三样载具各有的活法，炮艇这一份 ——
+    this.salvo = CONFIG.boat.salvo;               // 一次扳机打几发
+    this.salvoSpread = CONFIG.boat.salvoSpread;   // 扇形半角
+    this.shellSpeed = CONFIG.boat.shellSpeed;     // 舰炮：初速更高、弹道更平
+    this.shellDamage = CONFIG.boat.shellDamage;
+    this.aimErrorMul = CONFIG.boat.aimErrorMul;   // 远距离的瞄准误差只有坦克的四成
+    this.pitchMax = CONFIG.boat.turretPitchMax;   // 仰角更大：能抬头打低空飞机
 
     // 一开始就摆到水面上（Tank 构造里是按地形高度放的，海里那是盆底）
     this._keepInWater();
@@ -92,13 +107,21 @@ export class Boat extends Tank {
     this.barrelPivot.position.y = 0.55;
     this.turretGroup.add(this.barrelPivot);
 
+    // 三根炮管并排：一轮齐射就是这三根同时出膛（低模，三根管子比一根好认）
     const barrelGeo = new THREE.CylinderGeometry(0.17, 0.22, 5.2, 8);
     barrelGeo.rotateX(Math.PI / 2);
     barrelGeo.translate(0, 0, 2.6);
-    this.barrel = new THREE.Mesh(barrelGeo, mkMat(COLORS.barrel, 0.55, 0.24));
-    this.barrel.position.z = 1.1;
-    this.barrel.castShadow = true;
-    this.barrelPivot.add(this.barrel);
+    this.barrelSide = 0.62;                     // 相邻炮管的横向间距
+    this.barrels = [];
+    for (const bx of [-this.barrelSide, 0, this.barrelSide]) {
+      const b = new THREE.Mesh(barrelGeo, mkMat(COLORS.barrel, 0.55, 0.24));
+      b.position.set(bx, 0, 1.1);
+      b.castShadow = true;
+      this.barrelPivot.add(b);
+      this.barrels.push(b);
+    }
+    // Tank 那一套（瞄准虚线、炮口避障）只认一根炮管：拿中间那根当"主炮口"
+    this.barrel = this.barrels[1];
 
     this.muzzleDummy = new THREE.Object3D();
     this.muzzleDummy.position.set(0, 0, 6.3 + 1.1);
@@ -128,6 +151,55 @@ export class Boat extends Tank {
     super.update(dt);
     // 别开出海面：贴着海岸线里侧滑，不会搁浅在滩上
     this._keepInWater();
+  }
+
+  // ---------- 舰炮齐射 ----------
+  //
+  // 和坦克最大的区别就在这儿：坦克是"一发一发精确点射"（弹夹 10 发，能一直压着打），
+  // 炮艇是"一轮三发一起出膛"，呈固定的扇形铺开、三根炮管各出一发。
+  // 近距离糊脸特别狠（三发全中就是 54 点），打移动目标容错也高；
+  // 代价是这三发共用一次装填 —— 打空之后有几秒钟完全没火力，只能绕圈躲
+  fire() {
+    if (!this.alive) return false;
+    if (this.rounds < this.salvo) return false;   // 不满一轮齐射就不放（半轮打出去更亏）
+    if (this.shotTimer > 0) return false;
+
+    if (this.repairTimer > 0) this.cancelRepair();
+    this.shotTimer = CONFIG.tank.shotInterval;
+    this.rounds -= this.salvo;
+
+    const n = this.salvo;
+    const spreadMul = this.precise ? CONFIG.spread.aim : CONFIG.spread.move;
+    const spread = CONFIG.bullet.spread * spreadMul;
+    const baseDir = this.getBarrelDir(_dir).clone();
+
+    // 三根管子的横向方向：拿炮塔的世界姿态算，海面倾斜也不影响
+    this.barrelPivot.updateMatrixWorld(true);
+    this.barrelPivot.getWorldQuaternion(_quat);
+    _side.set(1, 0, 0).applyQuaternion(_quat);
+
+    for (let i = 0; i < n; i++) {
+      const k = i - (n - 1) / 2;                  // -1 / 0 / +1
+      // 扇形：以炮口方向为中心左右各偏一点（固定角度，不随机 —— 所以远处也是窄窄一撮）
+      const dir = baseDir.clone().applyAxisAngle(_up, k * this.salvoSpread);
+      dir.x += rand(-spread, spread);             // 再叠上坦克那套随机散布
+      dir.y += rand(-spread, spread);
+      dir.z += rand(-spread, spread);
+      dir.normalize();
+      const muzzle = this.getMuzzlePos(_mz).clone().addScaledVector(_side, k * this.barrelSide);
+      this.world.bullets.spawn({
+        pos: muzzle,
+        dir,
+        speed: this.shellSpeed,
+        damage: this.shellDamage,
+        owner: this,
+        team: this.team,
+        kind: 'shell',
+      });
+    }
+    this.world.effects.muzzleFlash(this.getMuzzlePos(_mz), baseDir, 1.25);
+    this.recoil = 1;
+    return true;
   }
 
   // 把船拉回"真实水线"以内。

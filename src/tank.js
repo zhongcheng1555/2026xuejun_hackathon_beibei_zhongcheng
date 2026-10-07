@@ -40,6 +40,9 @@ export class Tank {
     // 瞄准偏差倍率：普通车是 1（ai.js 里乘上去）。BOSS 会把它压小甚至归零
     this.aimErrorMul = undefined;
     this.aimErrorMulPrecise = undefined;   // 进瞄准模式时用的那一份
+    // 炮塔俯仰上下限：坦克用全局那一套，炮艇在构造函数里换成更大的仰角（能打飞机）
+    this.pitchMin = CONFIG.tank.turretPitchMin;
+    this.pitchMax = CONFIG.tank.turretPitchMax;
 
     this.yaw = opts.yaw ?? rand(0, Math.PI * 2);
     this.turretYaw = this.yaw;
@@ -221,13 +224,15 @@ export class Tank {
     this.turretYaw = turnTowards(this.turretYaw, desiredYaw, CONFIG.tank.turretSpeed * this.turretMul * dt);
 
     const distXZ = Math.max(1, Math.hypot(dx, dz));
-    const flight = distXZ / CONFIG.bullet.speed;
+    // 用这辆车**自己的**弹速算飞行时间：炮艇的舰炮初速高得多，弹道更平，
+    // 套坦克那一套会把提前量算过头
+    const flight = distXZ / (this.shellSpeed || CONFIG.bullet.speed);
     const drop = 0.5 * CONFIG.bullet.gravity * flight * flight;
     const desiredPitch = Math.atan2(target.y - muzzleY + drop, distXZ);
     this.turretPitch = clamp(
       turnTowards(this.turretPitch, desiredPitch, CONFIG.tank.turretPitchSpeed * dt),
-      CONFIG.tank.turretPitchMin,
-      CONFIG.tank.turretPitchMax
+      this.pitchMin,
+      this.pitchMax
     );
     this._applyTurret();
   }
@@ -239,8 +244,8 @@ export class Tank {
     const desiredPitch = Math.atan2(dir.y, Math.max(0.001, len));
     this.turretPitch = clamp(
       turnTowards(this.turretPitch, desiredPitch, CONFIG.tank.turretPitchSpeed * dt),
-      CONFIG.tank.turretPitchMin,
-      CONFIG.tank.turretPitchMax
+      this.pitchMin,
+      this.pitchMax
     );
     this._applyTurret();
   }
@@ -537,7 +542,10 @@ export class Tank {
     }
     if (this.lastHitTimer > 0) this.lastHitTimer -= dt;
     if (this.recoil > 0) this.recoil = Math.max(0, this.recoil - dt * 4);
-    this.barrel.position.z = 1.1 - this.recoil * 0.75;
+    // 后坐：炮艇是三根炮管并排，三根一起退
+    const recoilZ = 1.1 - this.recoil * 0.75;
+    if (this.barrels) { for (const b of this.barrels) b.position.z = recoilZ; }
+    else this.barrel.position.z = recoilZ;
 
     const isPlayer = this.isPlayer;
     // AI 的倒车意图由 AI 每帧设一次，这里用完就清掉（不清的话它会一直倒）

@@ -158,7 +158,7 @@ export class HUD {
       desc.textContent = this.side === 'plane'
         ? ''
         : this.side === 'boat'
-          ? '炮艇：只能在水里跑，炮慢、皮薄，换的是航速（会换成水图：湖 / 海）。'
+          ? '炮艇：一轮齐射三发（近距离糊脸最狠），舰炮打得准、还能抬头打飞机；代价是皮最薄、转向最笨，一轮打完要空几秒（会换成水图：湖 / 海）。'
           : '坦克：装甲厚、能修车，扛得住几发。';
     }
   }
@@ -299,7 +299,12 @@ export class HUD {
     // 数量也一样不该白送。原来还留了两格写「?」，等于占着地方说废话，干脆整块删掉
     this.el.ally.textContent = state.allyAlive;
     this.el.allyAir.textContent = state.allyAir;
-    this.el.kills.textContent = state.kills;
+    // 你的击毁：顺带标出"我方一共打掉多少"。队友干的活本来完全不露脸，
+    // 玩家很容易觉得"全是我一个人打的"（实测队友包了大头）——
+    // 把队伍的战果摆出来，这一局才像一场联合作战
+    const mine = state.kills;
+    const team = mine + (state.allyKills || 0);
+    this.el.kills.textContent = team > mine ? `${mine}（我方共 ${team}）` : `${mine}`;
     this.el.friendlyKills.textContent = state.friendlyKills;
     this.el.planes.textContent = state.planesDown;
   }
@@ -345,13 +350,15 @@ export class HUD {
       this.el.repairHint.classList.add('hidden');
     }
 
-    // 弹夹：显示已经压好的弹；弹链式装填，随时都在补，所以用"装填中"标注
+    // 弹夹：显示已经压好的弹；弹链式装填，随时都在补，所以用"装填中"标注。
+    // 炮艇是一轮齐射一起打的，用"齐射"两个字更贴切（还要标出"够不够一轮"）
     const mag = tank.magazine;
+    const kind = tank.isBoat ? `齐射 ${tank.rounds} / ${mag}` : `弹夹 ${tank.rounds} / ${mag}`;
     this.el.reloadFill.style.width = `${(tank.rounds / mag) * 100}%`;
-    this.el.reloadFill.classList.toggle('ready', tank.rounds > 0);
-    this.el.reloadLabel.textContent = tank.loading
-      ? `弹夹 ${tank.rounds} / ${mag} · 装填中`
-      : `弹夹 ${tank.rounds} / ${mag}`;
+    // 炮艇：不满一轮齐射是打不出去的，进度条也就别标"就绪"
+    const ready = tank.isBoat ? tank.rounds >= (tank.salvo || 1) : tank.rounds > 0;
+    this.el.reloadFill.classList.toggle('ready', ready);
+    this.el.reloadLabel.textContent = tank.loading ? `${kind} · 装填中` : kind;
   }
 
   // 飞机仪表：油门 / 本轮余弹 / 离地高度
