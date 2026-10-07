@@ -57,6 +57,10 @@ export class Tank {
     // 被坠落飞机砸中后的"跑不动"倒计时（不致命，只是短时间挪不快）
     this.slowTimer = 0;
     this.precise = false;   // 玩家：false=移动模式，true=瞄准模式（慢、准、有虚线弹道）
+    // 模式切换的过渡（只走玩家手动按的那条路，见 requestMode）：
+    // 按下之后先留在原模式，一秒后才真正换过去
+    this.modeSwitchTimer = 0;
+    this.modeSwitchPending = null;
     // 瞄准模式的减速倍率。正常是 aimSpeed；AI 在"追着飞机打"时会临时调成 1，
     // 免得开着瞄准模式慢慢蹭，永远追不到天上的飞机
     this.aimSpeedMul = CONFIG.player.aimSpeed;
@@ -398,8 +402,10 @@ export class Tank {
   }
 
   get canRepair() {
-    // 泡在水里不能修：车底泡着，维修兵下不去手
-    return this.alive && !this.repairing && !this.inWater && this.health < this.repairCeiling - 0.5;
+    // 泡在水里不能修：车底泡着，维修兵下不去手。
+    // 炮艇例外 —— 它一辈子都在水里，不例外就等于永远不能修（玩家反馈）
+    const inWet = this.inWater && !this.isBoat;
+    return this.alive && !this.repairing && !inWet && this.health < this.repairCeiling - 0.5;
   }
 
   // 这次修复要花多久：按"每秒最多修 repairSpeed 点"算，
@@ -421,6 +427,18 @@ export class Tank {
   startRepair() {
     if (!this.canRepair) return false;
     this._beginRepair();
+    return true;
+  }
+
+  // 请求切模式（移动 ⇄ 瞄准）：不是立刻生效，而是**留在原模式一秒**再换过去。
+  // 这一秒里照样能开炮、能跑（不是修复那种罚站），只是散布和车速还用原来那套。
+  // 玩家反馈：切得太丝滑会让游戏不平衡（一秒内来回点两下就能白嫖两种模式的优点）
+  requestMode(on) {
+    const next = !!on;
+    if (this.modeSwitchTimer > 0) return false;   // 正在切，不给连按
+    if (next === this.precise) return false;
+    this.modeSwitchTimer = CONFIG.tank.modeSwitchTime;
+    this.modeSwitchPending = next;
     return true;
   }
 
@@ -494,6 +512,18 @@ export class Tank {
 
     if (this.shotTimer > 0) this.shotTimer = Math.max(0, this.shotTimer - dt);
     if (this.repairTimer > 0) this._updateRepair(dt);
+    // 模式切换的过渡：时间到了才真正换过去（这一秒里照常开、照常跑）
+    if (this.modeSwitchTimer > 0) {
+      this.modeSwitchTimer -= dt;
+      if (this.modeSwitchTimer <= 0) {
+        this.modeSwitchTimer = 0;
+        if (this.modeSwitchPending !== null) {
+          this.precise = this.modeSwitchPending;
+          this.modeSwitchPending = null;
+          if (this.onModeChange) this.onModeChange(this.precise);
+        }
+      }
+    }
     // 弹链装填：只要弹夹没满就一直在压弹，压好一颗立刻接着压下一颗
     if (this.rounds < this.magazine) {
       if (this.loadTimer <= 0) this.loadTimer = this.loadTime;
@@ -542,7 +572,9 @@ export class Tank {
         const targetYaw = Math.atan2(this.moveIntent.x, this.moveIntent.z);
         this.yaw = turnTowards(this.yaw, targetYaw, this.turnSpeed * dt);
         const align = Math.cos(wrapAngle(targetYaw - this.yaw));
-        speed = this.speed * mag * clamp(align, 0.2, 1);
+        // 拐弯时按"车头对得齐不齐"打折，但下限给到 0.45：
+        // 原来下限 0.2，AI 一转弯就爬到两成速度，整体看着比玩家慢（玩家是原地转向再走）
+        speed = this.speed * mag * clamp(align, 0.45, 1);
         if (this.precise) speed *= this.aimSpeedMul;  // AI 进瞄准模式也会变慢（追飞机时例外）
         dirX = Math.sin(this.yaw);
         dirZ = Math.cos(this.yaw);
@@ -591,11 +623,13 @@ export class Tank {
       }
     }
 
-    // 贴地与随坡倾斜。两栖坦克在水里是"浮"着的：不沉到湖底，浮在水面下一点点
+    // 贴地与随坡倾斜。两栖坦克在水里是"浮"着的：不沉到湖底，浮在水面下一点点。
+    // 炮艇永远浮着（ignoreWater）：水面线是按浪算的，岸边浪谷那一下会让"地面高于水面"，
+    // 判定成"没浮起来"就会一头扎到海底（玩家反馈：船一会儿变潜水艇、一会儿又浮上来）
     const groundY = this.world.terrain.heightAt(this.pos.x, this.pos.z);
     const t2 = this.world.terrain;
     const level = t2.waterLevelAt ? t2.waterLevelAt(this.pos.x, this.pos.z) : null;
-    const floating = level !== null && level > groundY;
+    const floating = level !== null && (this.ignoreWater || level > groundY);
     this.pos.y = floating ? level - this.draft : groundY;
 
     // 岩浆里会持续被烧（别的地形上这个值恒为 0）

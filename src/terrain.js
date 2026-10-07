@@ -266,8 +266,11 @@ export class Terrain {
 
   // 按方向读一条环（水线 / 浅滩线），返回插值后的归一化距离
   ringAt(L, th) {
-    const ring = L.waterRing;
-    if (!ring || !ring.length) return 0.85;
+    return this._ringAt(L.waterRing, th, 0.85);
+  }
+
+  _ringAt(ring, th, dflt = 1) {
+    if (!ring || !ring.length) return dflt;
     const N = ring.length;
     let a = (th / (Math.PI * 2)) * N;
     a = ((a % N) + N) % N;
@@ -283,10 +286,14 @@ export class Terrain {
   _buildLakeSurface() {
     if (!this.lakes.length) return;
     this.waterMeshes = [];
-    const RINGS = [0.34, 0.67, 1.0];   // 三层：中心一圈、中间一圈、岸线一圈
     for (let li = 0; li < this.lakes.length; li++) {
       const L = this.lakes[li];
-      const N = (L.waterRing && L.waterRing.length) || 32;
+      // 水面网格的密度按水体大小给：一圈之间的间隔约 26 米。
+      // 原来固定 3 圈 × 32 段 —— 海面半径 370 多米，一圈之间隔着上百米，
+      // 浪在网格上根本立不起来（玩家反馈：海面看不到浪）。
+      // 26 米一格配 120 米左右的长涌浪，采样够用、顶点数也还便宜
+      const RINGS_N = clamp(Math.round(L.rx / 26), 3, 16);
+      const N = clamp(Math.round((Math.PI * 2 * L.rx) / 26), 32, 128);
       const verts = [];
       const base = [];                  // 每个顶点的 {x, z, r}：算波浪用
       const push = (x, z, r) => {
@@ -297,14 +304,18 @@ export class Terrain {
       const idx = [];
       const c0 = push(L.x, L.z, 0);
       const rings = [];
-      for (const f of RINGS) {
+      for (let ri = 1; ri <= RINGS_N; ri++) {
+        const f = ri / RINGS_N;
         const ring = [];
         for (let i = 0; i < N; i++) {
           const th = (i / N) * Math.PI * 2;
-          const k = L.waterRing ? L.waterRing[i] : 0.9;
-          const x = L.x + Math.cos(th) * L.rx * k * f;
-          const z = L.z + Math.sin(th) * L.rz * k * f;
-          ring.push(push(x, z, k * f));
+          // waterRing 是 32 个方向的水线，段数更多时按角度采样回来
+          const wr = L.waterRing
+            ? L.waterRing[Math.floor((i / N) * L.waterRing.length) % L.waterRing.length]
+            : 0.9;
+          const x = L.x + Math.cos(th) * L.rx * wr * f;
+          const z = L.z + Math.sin(th) * L.rz * wr * f;
+          ring.push(push(x, z, wr * f));
         }
         rings.push(ring);
       }
@@ -324,7 +335,9 @@ export class Terrain {
       geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
       geo.setIndex(idx);
       geo.computeVertexNormals();
-      const amp = (this.biome.lake && this.biome.lake.waveAmp) || 0;
+      const cfg = this.biome.lake || {};
+      const amp = cfg.waveAmp || 0;
+      const ws = cfg.waveScale || 0.07;
       const mat = new THREE.MeshStandardMaterial({
         color: L.color,
         roughness: 0.16,     // 又滑又亮 —— 一眼就认得出是水
@@ -339,19 +352,22 @@ export class Terrain {
       // 多片湖各自画一块，重叠处会 z-fighting：错开一丝高度，视觉上看不出来
       mesh.position.y = li * 0.03;
       this.group.add(mesh);
-      this.waterMeshes.push({ geo, base, amp, level: L.level });
+      this.waterMeshes.push({ geo, base, amp, ws, level: L.level, lake: L, N, ringCount: RINGS_N });
     }
   }
 
   // 水面的波高（低模：两条正弦叠一下就够了）。
   // 玩家能站上去的东西（船）和水面用的是同一个函数，所以船会跟着浪一起起伏，
-  // 不会出现"水面在动、船钉在固定海拔"的割裂感
-  waveAt(x, z) {
+  // 不会出现"水面在动、船钉在固定海拔"的割裂感。
+  // 波长由地形的 waveScale 给：海是长而慢的**涌浪**（120 米上下），湖是短一点的小波纹
+  waveAt(x, z, L) {
     if (!this.waterMeshes || !this.waterMeshes.length) return 0;
-    const a = this.waterMeshes[0].amp;
+    const wm = L ? (this.waterMeshes.find((m) => m.lake === L) || this.waterMeshes[0]) : this.waterMeshes[0];
+    const a = wm.amp;
     if (!a) return 0;
+    const ws = wm.ws || 0.07;
     const t = this.waterT || 0;
-    return a * Math.sin(x * 0.07 + t * 1.1) + a * 0.55 * Math.sin(z * 0.11 - t * 0.8);
+    return a * Math.sin(x * ws + t * 1.1) + a * 0.55 * Math.sin(z * ws * 1.55 - t * 0.8);
   }
 
   // 每帧推进水面（浪的时间 + 顶点）。main 的循环里调（走 terrain.update）
@@ -364,7 +380,7 @@ export class Terrain {
       const pos = wm.geo.attributes.position;
       const arr = pos.array;
       for (let i = 0, j = 0; i < wm.base.length; i += 3, j += 3) {
-        arr[j + 1] = wm.level + this.waveAt(wm.base[i], wm.base[i + 1]);
+        arr[j + 1] = wm.level + this.waveAt(wm.base[i], wm.base[i + 1], wm.lake);
       }
       pos.needsUpdate = true;
       wm.geo.computeVertexNormals();
@@ -379,7 +395,9 @@ export class Terrain {
   // 真正的水深线：浅滩能开进去（浮起来、变慢），只有比 wadeDepth 更深才算墙。
   _buildWadeRing() {
     if (!this.lakes.length) return;
-    const N = 32;
+    // 64 个方向：32 个的时候，浅滩线在陡岸那一侧变得很快，
+    // 用"四舍五入到最近方向"去判定会取到隔壁方向的值，坦克能从缝里蹭进深水
+    const N = 64;
     const wade = CONFIG.tank.wadeDepth;
     const maxFrac = CONFIG.tank.wadeMaxFrac;
     for (const L of this.lakes) {
@@ -699,21 +717,36 @@ export class Terrain {
     return this.lakes.length > 0 && this.lakeK(x, z) < 1;
   }
 
+  // 这个点落在哪片湖的椭圆范围里（不在任何湖里返回 null）。
+  // 注意椭圆的边**不**等于水边 —— 水面线在椭圆里侧（见 _buildWadeRing）
+  lakeAtPoint(x, z) {
+    for (const L of this.lakes) {
+      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) return L;
+    }
+    return null;
+  }
+
+  // 这个点是不是真的泡在水面以下（湖 / 海）
+  submergedAt(x, z) {
+    const L = this.lakeAtPoint(x, z);
+    if (!L) return false;
+    return this.heightAt(x, z) <= L.level + this.waveAt(x, z, L);
+  }
+
   // 湖面高度（不在湖里返回 null）—— 坦克用它决定"浮多高"，而不是沉到盆底。
   // 带上浪：船和水面用的是同一个波高函数，所以船会跟着浪起伏
   waterLevelAt(x, z) {
     for (const L of this.lakes) {
-      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) return L.level + this.waveAt(x, z);
+      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) return L.level + this.waveAt(x, z, L);
     }
     return null;
   }
 
   // 泡在水里的速度倍率（不在水里返回 1）
   waterSpeedMulAt(x, z) {
-    for (const L of this.lakes) {
-      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) {
-        return L.speedMul !== undefined ? L.speedMul : CONFIG.terrain.waterSpeed;
-      }
+    if (this.submergedAt(x, z)) {
+      const L = this.lakeAtPoint(x, z);
+      return L.speedMul !== undefined ? L.speedMul : CONFIG.terrain.waterSpeed;
     }
     if (this.stream && this.stream.kind !== 'ice' && this.streamDistance(x, z) < this.stream.width * 0.8) {
       return this.stream.speedMul !== undefined ? this.stream.speedMul : CONFIG.terrain.waterSpeed;
@@ -727,12 +760,14 @@ export class Terrain {
     return this.inLake(x, z);
   }
 
-  // 会减速的水：河水 / 岩浆 / 大湖。冰面是硬地，按正常速度走
+  // 会减速的水：河水 / 岩浆 / 大湖。冰面是硬地，按正常速度走。
+  // 大湖里**只有真的沉到水面以下才算水** —— 椭圆边上那一圈是干滩（水面线在椭圆里侧），
+  // 原来按椭圆算，结果"湖岸的下坡"被当成涉水，一路减速（玩家反馈：湖面下坡严重减速）
   isWater(x, z) {
     if (this.stream && this.stream.kind !== 'ice' && this.streamDistance(x, z) < this.stream.width * 0.8) {
       return true;
     }
-    return this.inLake(x, z);
+    return this.submergedAt(x, z);
   }
 
   rawHeight(x, z) {
@@ -1694,8 +1729,12 @@ export class Terrain {
   // 海域才是用来"把战场切开"的那种隔离
   _pushOutOfWater(pos, radius, out) {
     if (!this.lakes.length) return;
-    // 两遍：两个湖挨着的时候，被 A 推出去可能正好推进 B 里
-    for (let pass = 0; pass < 2; pass++) {
+    const bx0 = pos.x;
+    const bz0 = pos.z;
+    // 一遍一遍推到"两片湖都不在身下"为止。
+    // 湖是两片交叠的椭圆，把点从 A 推出去有可能正好推进 B、再从 B 推回 A ——
+    // 原来只跑 2 遍，收尾时那个点还可能躺在另一片湖里（实测坦克能一路趟进 2.8 米深的水）
+    for (let pass = 0; pass < 8; pass++) {
       let moved = false;
       for (const L of this.lakes) {
         // 归一化椭圆距离：湖心 0、岸边 1
@@ -1703,29 +1742,23 @@ export class Terrain {
         let uz = (pos.z - L.z) / L.rz;
         const len = Math.hypot(ux, uz);
         if (len < 1e-4) { ux = 1; uz = 0; } else { ux /= len; uz /= len; }
-        // 这个方向上的"深水线"（浅滩能趟到哪儿，见 _buildWadeRing）
-        let lim = 1.0;
-        if (L.wadeRing) {
-          const N = L.wadeRing.length;
-          let idx = Math.round((Math.atan2(uz, ux) / (Math.PI * 2)) * N);
-          idx = ((idx % N) + N) % N;
-          lim = L.wadeRing[idx];
-        }
+        // 这个方向上的"深水线"（浅滩能趟到哪儿，见 _buildWadeRing）。
+        // 按方向**插值**取，而不是四舍五入到最近的一条 —— 陡岸那侧相邻方向差得多，
+        // 取整会让判定线忽然放大十几米，坦克就从那儿蹭进深水里了
+        const lim = this._ringAt(L.wadeRing, Math.atan2(uz, ux), 1.0);
         // 判定线和推出线是同一条：坦克**停在浅滩边上**（连续、不跳），
         // 而不是"探进水里一点就被瞬移甩回来"（那是玩家反馈的"自动倒退"）
         if (len >= lim) continue;
-        const bx = pos.x;
-        const bz = pos.z;
         pos.x = L.x + ux * L.rx * lim;
         pos.z = L.z + uz * L.rz * lim;
-        if (out) {
-          out.x += pos.x - bx;
-          out.z += pos.z - bz;
-          out.hit = true;
-        }
         moved = true;
       }
       if (!moved) break;
+    }
+    if (out && (pos.x !== bx0 || pos.z !== bz0)) {
+      out.x += pos.x - bx0;
+      out.z += pos.z - bz0;
+      out.hit = true;
     }
   }
 

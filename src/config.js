@@ -29,6 +29,9 @@ export const CONFIG = {
     speed: 14,           // 最高速度（米/秒）
     turnSpeed: 1.7,      // 车体转向（弧度/秒），玩家能原地掉头、AI 边走边转
     reverseSpeed: 0.6,   // 倒车速度比例
+    // 切"移动 ⇄ 瞄准"模式要多久才生效：按下之后先留在原模式这么久，
+    // 期间照样能开炮、能跑 —— 免得一秒内来回点两下白嫖两种模式的优点
+    modeSwitchTime: 1,
     turretSpeed: 2.3,    // 炮塔转向
     turretPitchSpeed: 1.5,
     // 炮塔俯仰的上下限（玩家和 AI **共用**这一条线）。
@@ -713,6 +716,7 @@ export const BIOMES = [
       rx: 0.24, rz: 0.21, depth: 22,
       color: 0x24618f, speedMul: 0.38,
       waveAmp: 0.45,      // 浪高：湖面比海面稳
+      waveScale: 0.09,    // 波长：2π/0.09 ≈ 70 米的小波纹
     },
   },
   {
@@ -742,7 +746,8 @@ export const BIOMES = [
       chance: 1, count: 1, spots: [[0, 0]],
       rx: 0.46, rz: 0.46, depth: 30,
       color: 0x1f5f8c, speedMul: 0.36,
-      waveAmp: 1.2,       // 浪高：海面有真正的涌浪（低模，两条正弦叠一下）
+      waveAmp: 1.6,       // 浪高：海面有真正的涌浪（低模，两条正弦叠一下）
+      waveScale: 0.052,   // 波长：2π/0.052 ≈ 120 米的长涌浪 —— 又长又慢，一眼看得出在起伏
     },
   },
 ];

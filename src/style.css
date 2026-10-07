@@ -482,6 +482,16 @@ body {
   box-shadow: 0 0 18px rgba(255, 180, 84, 0.45);
 }
 
+/* 正在切模式（按下之后那一秒）：按钮走个呼吸，明确告诉玩家"还没切过去" */
+.mode-btn.switching {
+  animation: mode-switch-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes mode-switch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 /* 瞄准模式下准星变色收紧 */
 #crosshair.aim .line,
 #crosshair.aim .dot {

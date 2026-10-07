@@ -7,13 +7,9 @@ export class HUD {
     this.el = {
       hud: document.getElementById('hud'),
       ally: document.getElementById('stat-ally'),
-      enemy: document.getElementById('stat-enemy'),
       labelAlly: document.getElementById('label-ally'),
-      labelEnemy: document.getElementById('label-enemy'),
       unitAlly: document.getElementById('unit-ally'),
-      unitEnemy: document.getElementById('unit-enemy'),
       allyAir: document.getElementById('stat-ally-air'),
-      enemyAir: document.getElementById('stat-enemy-air'),
       kills: document.getElementById('stat-kills'),
       friendlyKills: document.getElementById('stat-friendly'),
       planes: document.getElementById('stat-planes'),
@@ -229,9 +225,16 @@ export class HUD {
     if (this.el.enterBtn) this.el.enterBtn.addEventListener('click', cb);
   }
 
-  // 移动模式 / 瞄准模式
-  setMode(precise) {
-    this.el.modeBtn.textContent = precise ? '瞄准模式 · F' : '移动模式 · F';
+  // 移动模式 / 瞄准模式。
+  // pending 不为 null 时表示"正在切过去"：按钮上写明目标模式，一秒后才会真正生效
+  setMode(precise, pending = null) {
+    const key = `${precise}|${pending}`;
+    if (key === this._modeKey) return;
+    this._modeKey = key;
+    this.el.modeBtn.textContent = pending === null
+      ? (precise ? '瞄准模式 · F' : '移动模式 · F')
+      : `切换到${pending ? '瞄准' : '移动'}模式…`;
+    this.el.modeBtn.classList.toggle('switching', pending !== null);
     this.el.modeBtn.classList.toggle('aim', precise);
     this.el.crosshair.classList.toggle('aim', precise);
   }
@@ -293,18 +296,17 @@ export class HUD {
 
   setCounts(state) {
     // 只显示**我方**兵力。敌方剩多少是情报 —— 这战场没有小地图、看不到别人血量，
-    // 数量也一样不该白送（玩家反馈：知道我方有多少就够了）
+    // 数量也一样不该白送。原来还留了两格写「?」，等于占着地方说废话，干脆整块删掉
     this.el.ally.textContent = state.allyAlive;
-    this.el.enemy.textContent = '?';
     this.el.allyAir.textContent = state.allyAir;
-    this.el.enemyAir.textContent = '?';
     this.el.kills.textContent = state.kills;
     this.el.friendlyKills.textContent = state.friendlyKills;
     this.el.planes.textContent = state.planesDown;
   }
 
   // 顶上那排兵力标签：本局有什么就写什么（船 / 坦克 / 飞机）。
-  // 混编局里"友军 坦克 / 飞机"会把水里的船也数进去，说不清楚，所以跟着阵容走
+  // 混编局里"友军 坦克 / 飞机"会把水里的船也数进去，说不清楚，所以跟着阵容走。
+  // 敌方那块已经不显示了 —— 不写"情报不明"这种占位的话
   setForceLabels({ boat, tank, air }) {
     const kinds = [];
     if (boat) kinds.push('炮艇');
@@ -312,12 +314,9 @@ export class HUD {
     if (air) kinds.push('飞机');
     const text = kinds.length ? ` / ${kinds.join(' / ')}` : '';
     if (this.el.labelAlly) this.el.labelAlly.textContent = `友军${text}`;
-    // 敌方阵容也只在开局简报里说，这块标签不写细节
-    if (this.el.labelEnemy) this.el.labelEnemy.textContent = '敌军（情报不明）';
     // 只有船的时候量词用"艘"，免得"2 辆炮艇"读着别扭
     const unit = boat && !tank ? '艘' : '辆';
     if (this.el.unitAlly) this.el.unitAlly.textContent = unit;
-    if (this.el.unitEnemy) this.el.unitEnemy.textContent = unit;
   }
 
   setPlayer(tank) {

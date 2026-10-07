@@ -913,7 +913,7 @@ export class TankAI {
       this._unstickMove(dx, dz);
     } else {
       const [ix, iz] = this._keepInside(dx, dz);
-      this._move(ix, iz, 0.85);
+      this._move(ix, iz, 1);
     }
 
     // 没目标时炮塔朝行进方向，看起来自然一点

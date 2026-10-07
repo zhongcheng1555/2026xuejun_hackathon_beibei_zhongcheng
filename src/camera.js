@@ -71,6 +71,15 @@ export function rigPosition(camYaw, camPitch, focusPos, terrain, outPos, outDir,
   const minY = terrain.heightAt(outPos.x, outPos.z) + 2.6;
   if (outPos.y < minY) outPos.y = minY;
 
+  // 也别让相机沉到水面以下。炮艇贴着水面开，抬头打飞机时视线朝上、
+  // 相机被压到焦点下方，正好钻进船体/水下 —— 屏幕上一片黑
+  // （玩家反馈：炮艇打飞机、看坠落的飞机时"眼前一片黑"）。
+  // 湖底的坑很深，地面那条 clamp 兜不住这里
+  if (terrain.waterLevelAt) {
+    const wl = terrain.waterLevelAt(outPos.x, outPos.z);
+    if (wl !== null && outPos.y < wl + 1.2) outPos.y = wl + 1.2;
+  }
+
   // 别让相机钻进墙里 / 楼里 / 树篱里。
   // 迷宫那张图通道只有 20 米宽、树篱 9.5 米高，镜头挂在车后 21 米，
   // 只要一转视角就会卡进树篱内部 —— 屏幕上就是一片绿，看着像"自己跑到墙里去了"。

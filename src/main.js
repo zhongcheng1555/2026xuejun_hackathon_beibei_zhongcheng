@@ -752,6 +752,14 @@ export class Game {
     if (this.playerSide !== 'plane') {
       this.hud.setPlayer(this.player);
       this.hud.setMode(this.player.precise);
+      // 模式切换过渡结束时（Tank 里那一秒走完）回调过来刷 HUD 和战报
+      this.player.onModeChange = (precise) => {
+        this.hud.setMode(precise);
+        this.hud.feed(
+          precise ? '瞄准模式：车速三成、散布极小，虚线是炮弹实际弹道' : '移动模式：跑得快，但炮弹散布明显更大',
+          precise ? 'air' : 'friendly'
+        );
+      };
     }
     // 顶上那排兵力数字的标签跟着本局的阵容走（船 / 坦克 / 飞机 有哪几种就写哪几种）
     this.hud.setForceLabels({
@@ -1328,15 +1336,19 @@ export class Game {
     );
   }
 
-  // 移动模式 ⇄ 瞄准模式（F 键或点 HUD 按钮）；飞机没有这套，直接忽略
+  // 移动模式 ⇄ 瞄准模式（F 键或点 HUD 按钮）；飞机没有这套，直接忽略。
+  // 切换不是瞬时的：按下之后**先留在原模式一秒**才换过去，这一秒里照样能开炮、能跑
   toggleMode() {
     const p = this.player;
     if (!p || !p.alive || p.isPlane) return;
-    p.precise = !p.precise;
-    this.hud.setMode(p.precise);
+    if (!p.requestMode(!p.precise)) {
+      if (p.modeSwitchTimer > 0) this.hud.feed('模式正在切换中，稍等一下', 'friendly');
+      return;
+    }
+    this.hud.setMode(p.precise, p.modeSwitchPending);
     this.hud.feed(
-      p.precise ? '瞄准模式：车速三成、散布极小，虚线是炮弹实际弹道' : '移动模式：跑得快，但炮弹散布明显更大',
-      p.precise ? 'air' : 'friendly'
+      `正在切到${p.modeSwitchPending ? '瞄准' : '移动'}模式…（1 秒后生效，这期间还能开炮）`,
+      'friendly'
     );
   }
 
