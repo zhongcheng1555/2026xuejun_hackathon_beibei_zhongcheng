@@ -100,6 +100,7 @@ export class ScoutManager {
     this.world = world;
     this.list = [];
     this.reportCooldown = 0;
+    this.friendCooldown = 0; // 我方情报（落单挨打 / 扎堆）的限流
     this.warnCooldown = 0;   // 被敌方侦察兵盯上的提醒，别刷太勤
     this.allyCount = Math.ceil(count / 2);
     this.total = count;
@@ -123,6 +124,7 @@ export class ScoutManager {
 
   reset() {
     this.reportCooldown = 0;
+    this.friendCooldown = 0;
     this.warnCooldown = 0;
     // 每边的"补充名额"每局重置：名额用完，倒下的侦察兵就真的没了
     this.rebirths = { [TEAM.ALLY]: 0, [TEAM.ENEMY]: 0 };
@@ -159,6 +161,7 @@ export class ScoutManager {
   update(dt) {
     this._respawn(dt);
     this.reportCooldown = Math.max(0, this.reportCooldown - dt);
+    this.friendCooldown = Math.max(0, this.friendCooldown - dt);
     this.warnCooldown = Math.max(0, this.warnCooldown - dt);
     this._crushCheck();
     for (const s of this.list) {
@@ -301,10 +304,9 @@ export class ScoutManager {
     const seen = this.world.tanks.filter(
       (t) => t.alive && t.team === foeTeam && s.distTo(t.pos.x, t.pos.z) < CONFIG.scout.spotRange
     );
-    if (!seen.length) return;
 
     // 通报给本方的 AI：把这批敌人的位置记成"最近交火点"，队友巡逻会往那边赶
-    if (this.world.lastContact) {
+    if (seen.length && this.world.lastContact) {
       let cx = 0;
       let cz = 0;
       for (const t of seen) {
@@ -318,6 +320,7 @@ export class ScoutManager {
     if (s.team !== TEAM.ALLY) {
       const player = this.world.player;
       if (
+        seen.length &&
         player &&
         player.alive &&
         s.distTo(player.pos.x, player.pos.z) < CONFIG.scout.spotRange &&
@@ -332,9 +335,16 @@ export class ScoutManager {
       return;   // 敌方的情报不给你看
     }
 
-    if (this.reportCooldown > 0) return;   // 我方情报限流，免得刷屏
     const player = this.world.player;
     if (!player || !player.alive) return;
+
+    // 没看到敌人 → 报我方的队形（谁落单挨打、哪边扎堆可以凑）
+    if (!seen.length) {
+      this._reportFriend(player);
+      return;
+    }
+
+    if (this.reportCooldown > 0) return;   // 我方情报限流，免得刷屏
 
     // 按离玩家最近的那股敌人报
     seen.sort((a, b) => a.pos.distanceTo(player.pos) - b.pos.distanceTo(player.pos));
@@ -352,6 +362,69 @@ export class ScoutManager {
     }
     this.reportCooldown = CONFIG.scout.reportCooldown;
     this.world.onScoutReport(text);
+  }
+
+  // 我方的情报：侦察兵不只盯敌人，也看自己人。
+  // 玩家原话："我方左上角有一辆落单坦克被围攻需要保护" /
+  //           "我方 6 个坦克在你站前方聚集，可以凑进团队里一起攻击"
+  // 方位一律相对**玩家车头**来说，不报绝对坐标（每个人看到的战场朝向都不一样）
+  _reportFriend(player) {
+    if (this.friendCooldown > 0) return;
+    const C = CONFIG.scout;
+    const mates = this.world.tanks.filter((t) => t.alive && t.team === TEAM.ALLY && t !== player);
+    if (!mates.length) return;
+    const foes = this.world.tanks.filter((t) => t.alive && t.team !== TEAM.ALLY);
+
+    // ① 落单被围攻：身边敌车够多、附近一辆自家车都没有 —— 最该先喊的
+    let worst = null;
+    for (const m of mates) {
+      let nFoe = 0;
+      for (const f of foes) {
+        if (Math.hypot(f.pos.x - m.pos.x, f.pos.z - m.pos.z) < C.swarmRange) nFoe++;
+      }
+      if (nFoe < C.swarmMin) continue;
+      let nMate = 0;
+      for (const o of mates) {
+        if (o === m) continue;
+        if (Math.hypot(o.pos.x - m.pos.x, o.pos.z - m.pos.z) < C.mateRange) nMate++;
+      }
+      if (nMate > 0) continue;                    // 身边还有队友，不算落单
+      if (!worst || nFoe > worst.n) worst = { m, n: nFoe };
+    }
+    if (worst) {
+      this.friendCooldown = C.friendCooldown;
+      this.world.onScoutReport(
+        `侦察兵报告：我方${relativeSector(playerHeading(player), player.pos, worst.m.pos)}` +
+          `有 1 辆落单坦克被 ${worst.n} 辆敌车围攻，需要支援`,
+        'danger'
+      );
+      return;
+    }
+
+    // ② 扎堆：找最大的一股
+    let best = null;
+    for (const m of mates) {
+      const grp = [m];
+      for (const o of mates) {
+        if (o === m) continue;
+        if (Math.hypot(o.pos.x - m.pos.x, o.pos.z - m.pos.z) < C.groupRange) grp.push(o);
+      }
+      if (!best || grp.length > best.length) best = grp;
+    }
+    if (best && best.length >= C.groupMin) {
+      let cx = 0;
+      let cz = 0;
+      for (const t of best) {
+        cx += t.pos.x;
+        cz += t.pos.z;
+      }
+      const c = { pos: { x: cx / best.length, z: cz / best.length } };
+      this.friendCooldown = C.friendCooldown;
+      this.world.onScoutReport(
+        `侦察兵报告：我方 ${best.length} 辆坦克在${relativeSector(playerHeading(player), player.pos, c.pos)}` +
+          '聚集，可以凑进去一起打'
+      );
+    }
   }
 }
 

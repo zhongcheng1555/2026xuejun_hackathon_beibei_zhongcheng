@@ -1040,7 +1040,7 @@ export class TankAI {
     // 最后再让开车道：别顶在友军的炮口正前方（不然人家一开炮就打到自己人）
     const dodge = this._dodgeAllyLine(mx, mz);
     const [ix, iz] = this._keepInside(dodge[0], dodge[1]);
-    this._move(ix, iz, 0.95);
+    this._move(ix, iz, 1);
   }
 
   _retreat(dt, dist) {

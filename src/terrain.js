@@ -141,6 +141,10 @@ export class Terrain {
           const x = L.x + Math.cos(a) * L.rx * k;
           const z = L.z + Math.sin(a) * L.rz * k;
           const r = this.size * rand(cfg.r[0], cfg.r[1]);
+          // 整座岛要塞在可战场里面：压在边界上会被边界夹住 ——
+          // 岛心正好落在 playable 上时，推开的方向有一半朝外，会被 clamp 顶回来，
+          // 船就永远卡在岛里出不来（实测复现过）
+          if (Math.max(Math.abs(x), Math.abs(z)) + r * 1.05 > this.playable) continue;
           let ok = true;
           for (const I of this.islands) {
             if (Math.hypot(I.x - x, I.z - z) < I.r + r + gap) { ok = false; break; }
