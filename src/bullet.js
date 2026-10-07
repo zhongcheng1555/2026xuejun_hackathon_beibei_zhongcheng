@@ -146,7 +146,15 @@ export class BulletManager {
       }
 
       // 2) 掩体（含隧道岩顶：飞机从上面打不进隧道里）
-      if (terrain.hitCollider(b.pos.x, b.pos.y, b.pos.z) || terrain.roofAt(b.pos.x, b.pos.y, b.pos.z)) {
+      //    这里是**从上一帧位置到这一帧位置的整条线段**去撞，不是只测落点：
+      //    炮弹一帧飞 2.5 米，比城里的断墙还厚，只测落点会直接穿过去。
+      //    另外补一个"胶囊"点判定（terrain.pointInWall）—— 车体碰撞走的是胶囊，
+      //    和圆链不完全重合，这边也认一下，免得从两者的缝里钻过去
+      if (
+        terrain.segmentHit(b.prev.x, b.prev.y, b.prev.z, b.pos.x, b.pos.y, b.pos.z) ||
+        (terrain.pointInWall && terrain.pointInWall(b.pos.x, b.pos.y, b.pos.z)) ||
+        terrain.roofAt(b.pos.x, b.pos.y, b.pos.z)
+      ) {
         this._impact(b, false);
         continue;
       }

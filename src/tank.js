@@ -252,10 +252,17 @@ export class Tank {
     const dz = Math.cos(this.turretYaw) * cp;
     const baseY = this.pos.y + this.barrelBaseY;
     let d = maxD;
-    // 0.8 米一步往外走，撞上就退半步。起点 2.6 —— 车体半径 3.4 以内不可能有障碍物
-    for (let s = 2.6; s < maxD; s += 0.8) {
-      if (this.world.terrain.hitCollider(this.pos.x + dx * s, baseY + dy * s, this.pos.z + dz * s)) {
-        d = s - 0.4;
+    // 0.5 米一步往外探，撞上就退 0.45（比原来 0.8 米一步细 —— 城里的断墙只有2米厚，
+    // 步子太大要么探不到、要么把炮口留在墙里，开炮时炮弹就生在墙那边了）
+    // 起点 2.6 —— 车体半径 3.4 以内不可能有障碍物
+    // 注意两种碰撞都要探：圆链是"子弹判定"，胶囊是"车体碰撞"（见 terrain.pointInWall）
+    const t = this.world.terrain;
+    for (let s = 2.6; s < maxD; s += 0.5) {
+      const px = this.pos.x + dx * s;
+      const py = baseY + dy * s;
+      const pz = this.pos.z + dz * s;
+      if (t.hitCollider(px, py, pz) || (t.pointInWall && t.pointInWall(px, py, pz))) {
+        d = s - 0.45;
         break;
       }
     }

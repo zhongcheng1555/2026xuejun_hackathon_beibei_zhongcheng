@@ -6,6 +6,10 @@ import { clamp, lerp, rand, randInt, smoothstep } from './utils.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// 会挡视线的碰撞体：楼、断墙、树篱、山谷岩壁（都是 kind 'building'）。
+// 树 / 石头 / 沙袋不算 —— 树林里枝叶挡不住炮弹，不然子弹会平白无故打不出来
+const BUILDING_FILTER = (c) => c.kind === 'building';
+
 export class Terrain {
   constructor(scene, noise, biome = BIOMES[0]) {
     this.scene = scene;
@@ -23,6 +27,10 @@ export class Terrain {
 
     this.colliders = [];
     this.grid = new Map();
+    // 墙（胶囊：线段 + 半径）。车体碰撞走这一套 —— 一串圆中间有凹谷，
+    // 坦克开进去会被两边的推力夹住、卡在墙里（见 _resolveWalls）
+    this.walls = [];
+    this.wallGrid = new Map();
     this.cell = 24;
     this.playable = this.half * 0.78;
 
@@ -998,22 +1006,56 @@ export class Terrain {
     return col;
   }
 
+  // 一根"墙"（胶囊）。网格按它的包围盒铺开，保证任何贴着它的位置都查得到
+  _pushWall(ax, az, bx, bz, r, h) {
+    const w = { x0: ax, z0: az, x1: bx, z1: bz, r, h };
+    this.walls.push(w);
+    const c0 = Math.floor((Math.min(ax, bx) - r + this.half) / this.cell);
+    const c1 = Math.floor((Math.max(ax, bx) + r + this.half) / this.cell);
+    const d0 = Math.floor((Math.min(az, bz) - r + this.half) / this.cell);
+    const d1 = Math.floor((Math.max(az, bz) + r + this.half) / this.cell);
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cz = d0; cz <= d1; cz++) {
+        const key = `${cx},${cz}`;
+        if (!this.wallGrid.has(key)) this.wallGrid.set(key, []);
+        this.wallGrid.get(key).push(w);
+      }
+    }
+    return w;
+  }
+
   // 一个方盒建筑：现有碰撞系统只认圆，所以用 4 个圆近似它的四个角
   _boxCollider(x, z, w, d, ry, h) {
     const y = this.heightAt(x, z);
-    const hw = w * 0.32;
-    const hd = d * 0.32;
-    const r = Math.min(w, d) * 0.42;
+    // 角圆要**内切**在楼里（圆心 = 半边长 - 半径）。原来的 0.32w / 0.42min 摆在
+    // 靠里的位置但半径更大，圆会鼓到楼外面去 —— 贴墙的坦克炮口探进这圈"看不见的
+    // 碰撞体"里，一发都打不出去
+    const r = Math.min(w, d) * 0.46;
+    const ox = Math.max(0, w * 0.5 - r);
+    const oz = Math.max(0, d * 0.5 - r);
     const ca = Math.cos(ry);
     const sa = Math.sin(ry);
     for (const [ux, uz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      this._pushCollider(x + ca * ux * hw + sa * uz * hd, z - sa * ux * hw + ca * uz * hd, y, r, h);
+      this._pushCollider(x + ca * ux * ox + sa * uz * oz, z - sa * ux * ox + ca * uz * oz, y, r, h);
     }
-    // 中间再补一个，免得坦克从四个圆之间挤进去
+    // 中间再补一个，免得坦克/炮弹从四个角圆之间挤进去
     this._pushCollider(x, z, y, Math.min(w, d) * 0.5, h);
+    // 车体物理另用 4 条"边框胶囊"：圆的凹谷会把坦克夹进楼里
+    const er = Math.min(w, d) * 0.26;
+    const toW = (lx, lz) => [x + ca * lx + sa * lz, z - sa * lx + ca * lz];
+    const ex = Math.max(0, w * 0.5 - er);
+    const ez = Math.max(0, d * 0.5 - er);
+    for (const [lx, lz, lx2, lz2] of [
+      [-ex, ez, ex, ez], [-ex, -ez, ex, -ez],
+      [ex, -ez, ex, ez], [-ex, -ez, -ex, ez],
+    ]) {
+      const [ax, az] = toW(lx, lz);
+      const [bx, bz] = toW(lx2, lz2);
+      this._pushWall(ax, az, bx, bz, er, h);
+    }
   }
 
-  // 一道长墙：沿墙身等距摆一串圆
+  // 一道长墙：沿墙身等距摆一串圆（子弹 / 视线判定用），再补一根胶囊（车体碰撞用）
   _lineCollider(x, z, len, ry, r, h) {
     const y = this.heightAt(x, z);
     const n = Math.max(2, Math.round(len / (r * 1.5)));
@@ -1023,6 +1065,8 @@ export class Terrain {
       const t = (i / (n - 1) - 0.5) * Math.max(0, len - r * 2);
       this._pushCollider(x + dx * t, z + dz * t, y, r, h);
     }
+    const half = Math.max(0, len * 0.5 - r);
+    this._pushWall(x - dx * half, z - dz * half, x + dx * half, z + dz * half, r, h);
   }
 
   // ---------- 城市废墟 ----------
@@ -1386,21 +1430,19 @@ export class Terrain {
   // 两点之间有没有"墙"挡着（楼、树篱这类高掩体）。
   // 树、石头、沙袋不算 —— 树林里枝叶挡不住炮弹，不然子弹会平白无故打不出来
   losBlocked(from, to) {
+    // 楼 / 树篱 / 岩壁：用**精确的线段判定**。
+    // 原来是"每 12 米取一个点" —— 城里的断墙只有 2 米厚、花园的墙角也有薄的地方，
+    // 采样点会整段跨过去，AI 就"隔着墙看得见你、隔着墙放炮"（玩家反馈的头号问题）
+    if (this.segmentHit(from.x, from.y, from.z, to.x, to.y, to.z, BUILDING_FILTER)) return true;
+    // 隧道岩顶是方盒，还是按距离采样（约每 6 米一个点）
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const dz = to.z - from.z;
-    // 按距离决定采样密度（约每 12 米一个点）：隔着几百米也只取 6 个点的话，
-    // 中间那栋楼会整栋被跳过去，AI 就会对着墙放炮
     const dist = Math.hypot(dx, dy, dz);
-    const n = clamp(Math.round(dist / 12), 4, 34);
-    for (let k = 1; k <= n; k++) {
-      const s = k / (n + 1);
-      const px = from.x + dx * s;
-      const py = from.y + dy * s;
-      const pz = from.z + dz * s;
-      if (this.roofAt(px, py, pz)) return true;      // 隧道岩顶：上面打不进去
-      const c = this.hitCollider(px, py, pz);
-      if (c && c.kind === 'building') return true;
+    const n = clamp(Math.round(dist / 6), 4, 96);
+    for (let k = 0; k <= n; k++) {
+      const s = k / n;
+      if (this.roofAt(from.x + dx * s, from.y + dy * s, from.z + dz * s)) return true;
     }
     return false;
   }
@@ -1436,6 +1478,20 @@ export class Terrain {
 
   // ignoreWater 给炮艇用：水里才是它的地盘，不能把它从水里推出去（见 boat.js）
   resolveCircle(pos, radius, out, ignoreWater = false) {
+    // 两遍：被 A 推出去可能正好推进 B 里（挨着的墙、水岸都是这样）
+    for (let pass = 0; pass < 2; pass++) {
+      const moved = this._resolveCircles(pos, radius, out) | this._resolveWalls(pos, radius, out);
+      if (!moved) break;
+    }
+    if (!ignoreWater) this._pushOutOfWater(pos, radius, out);
+    const limit = this.playable;
+    pos.x = clamp(pos.x, -limit, limit);
+    pos.z = clamp(pos.z, -limit, limit);
+  }
+
+  // 圆形碰撞体（树、石头、沙袋、礁岛、以及墙的"子弹判定"）
+  _resolveCircles(pos, radius, out) {
+    let moved = false;
     const cx = Math.floor((pos.x + this.half) / this.cell);
     const cz = Math.floor((pos.z + this.half) / this.cell);
     for (let dz = -1; dz <= 1; dz++) {
@@ -1462,14 +1518,64 @@ export class Terrain {
               out.z += pos.z - bz;
               out.hit = true;
             }
+            moved = true;
           }
         }
       }
     }
-    if (!ignoreWater) this._pushOutOfWater(pos, radius, out);
-    const limit = this.playable;
-    pos.x = clamp(pos.x, -limit, limit);
-    pos.z = clamp(pos.z, -limit, limit);
+    return moved;
+  }
+
+  // 墙（胶囊：线段 + 半径）。**车体只跟胶囊打架，不跟那串圆打架** ——
+  // 一串互相重叠的圆中间有个凹谷：坦克开进去会被两边的推力顶住、卡在墙体内侧，
+  // 看起来就是"墙是空心的、车陷进去了、炮口留在墙里"。
+  // 胶囊没有谷：离墙面的距离就是"点到线段的最短距离"，推出去的方向永远是墙的法线。
+  _resolveWalls(pos, radius, out) {
+    if (!this.walls.length) return false;
+    let moved = false;
+    const cx = Math.floor((pos.x + this.half) / this.cell);
+    const cz = Math.floor((pos.z + this.half) / this.cell);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = this.wallGrid.get(`${cx + dx},${cz + dz}`);
+        if (!arr) continue;
+        for (const w of arr) {
+          const vx = w.x1 - w.x0;
+          const vz = w.z1 - w.z0;
+          const len2 = vx * vx + vz * vz || 1;
+          let u = ((pos.x - w.x0) * vx + (pos.z - w.z0) * vz) / len2;
+          u = clamp(u, 0, 1);
+          const qx = w.x0 + vx * u;
+          const qz = w.z0 + vz * u;
+          // 高度判定用"墙在这儿的**当地地面**"，不能用整面墙统一一个 y ——
+          // 树篱有 68 米长，两头比中间低好几米，用统一的 y 会让靠近的坦克
+          // 被判成"站在墙顶上"，于是直接从墙里穿过去
+          if (pos.y > this.heightAt(qx, qz) + w.h) continue;
+          let ddx = pos.x - qx;
+          let ddz = pos.z - qz;
+          let dist = Math.hypot(ddx, ddz);
+          const minDist = w.r + radius;
+          if (dist >= minDist) continue;
+          if (dist < 1e-4) {
+            // 正好压在中轴线上（退化）：沿墙的法线推
+            ddx = -vz;
+            ddz = vx;
+            dist = Math.hypot(ddx, ddz) || 1;
+          }
+          const bx = pos.x;
+          const bz = pos.z;
+          pos.x = qx + (ddx / dist) * minDist;
+          pos.z = qz + (ddz / dist) * minDist;
+          if (out) {
+            out.x += pos.x - bx;
+            out.z += pos.z - bz;
+            out.hit = true;
+          }
+          moved = true;
+        }
+      }
+    }
+    return moved;
   }
 
   // 深水（海 / 大湖）是硬障碍：坦克、侦察兵开不进去，会被推回岸上。
@@ -1544,6 +1650,75 @@ export class Terrain {
         for (const c of arr) {
           if (y < c.y || y > c.y + c.h) continue;
           if (Math.hypot(x - c.x, z - c.z) < c.r) return c;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 这一点是不是在某根墙（胶囊）里。车体碰撞用胶囊、圆链只是"子弹判定"，
+  // 两套几何不一致的话，贴着墙的坦克炮管会缩得不够（炮口探进墙里一点点，
+  // 开炮就在自己炮口炸）。炮管避障用它，和车体那边对齐
+  pointInWall(x, y, z) {
+    if (!this.walls.length) return null;
+    const cx = Math.floor((x + this.half) / this.cell);
+    const cz = Math.floor((z + this.half) / this.cell);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = this.wallGrid.get(`${cx + dx},${cz + dz}`);
+        if (!arr) continue;
+        for (const w of arr) {
+          const vx = w.x1 - w.x0;
+          const vz = w.z1 - w.z0;
+          const len2 = vx * vx + vz * vz || 1;
+          let u = ((x - w.x0) * vx + (z - w.z0) * vz) / len2;
+          u = clamp(u, 0, 1);
+          const qx = w.x0 + vx * u;
+          const qz = w.z0 + vz * u;
+          if (y > this.heightAt(qx, qz) + w.h) continue;
+          if (Math.hypot(x - qx, z - qz) < w.r) return w;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 线段 vs 碰撞体：**精确**判定（点到线段的最短距离 vs 半径），不是采样。
+  // 为什么非要精确：炮弹一帧飞 2.5 米，而城里"断墙"的碰撞半径只有 1 米出头 ——
+  // 采样式的检测（只测落点、或者每 12 米取一个点）会整段跨过这堵墙，
+  // 于是"贴墙就能隔墙打人""AI 隔着树篱看得见你"。
+  // 沿线段每格取一个点、把该点 3×3 格里的碰撞体都拿来做精确判定（顺便去重）
+  segmentHit(ax, ay, az, bx, by, bz, filter) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const abz = bz - az;
+    const flat2 = abx * abx + abz * abz;
+    if (flat2 < 1e-8) return this.hitCollider(ax, ay, az);
+    const len = Math.sqrt(flat2);
+    const steps = Math.max(1, Math.ceil(len / this.cell));
+    const seen = this._segSeen || (this._segSeen = new Set());
+    seen.clear();
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const cx = Math.floor((ax + abx * t + this.half) / this.cell);
+      const cz = Math.floor((az + abz * t + this.half) / this.cell);
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const arr = this.grid.get(`${cx + dx},${cz + dz}`);
+          if (!arr) continue;
+          for (const c of arr) {
+            if (seen.has(c)) continue;
+            seen.add(c);
+            if (filter && !filter(c)) continue;
+            // 线段上离这个圆心最近的那一点（水平面内）
+            let u = ((c.x - ax) * abx + (c.z - az) * abz) / flat2;
+            u = clamp(u, 0, 1);
+            const qy = ay + aby * u;
+            if (qy < c.y || qy > c.y + c.h) continue;   // 高度上没够着这个碰撞体
+            const ddx = c.x - (ax + abx * u);
+            const ddz = c.z - (az + abz * u);
+            if (ddx * ddx + ddz * ddz < c.r * c.r) return c;
+          }
         }
       }
     }
