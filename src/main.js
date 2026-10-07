@@ -11,6 +11,7 @@ import { PlaneManager } from './plane.js';
 import { ScoutManager } from './scout.js';
 import { Tank } from './tank.js';
 import { Boat, waterSpawns } from './boat.js';
+import { Boss } from './boss.js';
 import { TankAI } from './ai.js';
 import { Input } from './input.js';
 import { HUD } from './hud.js';
@@ -739,6 +740,10 @@ export class Game {
       if (a.length) this._spawnBoat(TEAM.ALLY, a[0], 0, false);
       if (e.length) this._spawnBoat(TEAM.ENEMY, e[0], Math.PI, false);
     }
+    // BOSS：低概率出现（敌我两边都可能）。纯空战 / 纯海战不出现
+    if (!this.pureAir && !this.pureSea && Math.random() < CONFIG.boss.chance) {
+      this._spawnBossWithEscorts();
+    }
     this.updateCamera(1);
 
     this.state = 'playing';
@@ -989,6 +994,63 @@ export class Game {
       this.ais.push(ai);
     }
     return boat;
+  }
+
+  // BOSS + 随从（规则是玩家定的）：
+  //   · 纯空战 / 纯海战不出现（调用处已经拦掉）
+  //   · 随机挑一边当"BOSS 方"（敌我都有可能）
+  //   · 如果**对手**的坦克 + 飞机 + 炮艇 ≥ escortMinFoe，BOSS 随机带 1~2 个随从；
+  //     随从的类型也是随机（坦克 / 飞机 / 船），不可行的类型就不放进抽签：
+  //     有水的图才可能有船，纯陆战那局没有飞机
+  _spawnBossWithEscorts() {
+    const team = Math.random() < 0.5 ? TEAM.ALLY : TEAM.ENEMY;
+    const foe = team === TEAM.ALLY ? TEAM.ENEMY : TEAM.ALLY;
+    const foeCount =
+      this.tanks.filter((t) => t.alive && t.team === foe).length +
+      this.planes.list.filter((p) => !p.retired && p.alive && p.team === foe).length;
+
+    const boss = new Boss(this, {
+      team,
+      position: this._findSpawn(team, 26),
+      yaw: team === TEAM.ALLY ? 0 : Math.PI,
+      name: 'BOSS',
+    });
+    this.tanks.push(boss);
+    const ai = new TankAI(boss, this);
+    boss.ai = ai;
+    this.ais.push(ai);
+    this.boss = boss;
+
+    const escorts = [];
+    if (foeCount >= CONFIG.boss.escortMinFoe) {
+      const kinds = ['tank'];
+      if (this.terrain.lakes.length) kinds.push('boat');
+      if (this.planes.list.some((p) => !p.retired)) kinds.push('plane');
+      const n = randInt(1, CONFIG.boss.escortMax);
+      for (let i = 0; i < n; i++) {
+        const kind = kinds[randInt(0, kinds.length - 1)];
+        if (kind === 'tank') {
+          this._spawnTank(team, this._findSpawn(team, 22), team === TEAM.ALLY ? 0 : Math.PI, false);
+        } else if (kind === 'boat') {
+          const sp = waterSpawns(this.terrain, team, 1);
+          if (sp.length) this._spawnBoat(team, sp[0], 0, false);
+        } else if (!this.planes.addOne(team)) {
+          this._spawnTank(team, this._findSpawn(team, 22), team === TEAM.ALLY ? 0 : Math.PI, false);
+        }
+        escorts.push(kind);
+      }
+    }
+    this.bossEscorts = escorts;
+    // 战报只报"我方的事"：敌方 BOSS 有没有登场、带几个随从，那是敌方情报，
+    // 不该出现在右侧（玩家自己撞见了才算知道）
+    if (team === TEAM.ALLY) {
+      this.hud.feed(
+        '我方 BOSS 登场：装甲厚、炮更大、炮弹还会拐一点' +
+          (escorts.length ? ` · 带 ${escorts.length} 个随从` : ' · 单枪匹马'),
+        'danger'
+      );
+    }
+    this.updateCounts();
   }
 
   // 纯空战里那辆坦克 20 秒才能打一炮：弹夹压成 1 发、装填拉长。

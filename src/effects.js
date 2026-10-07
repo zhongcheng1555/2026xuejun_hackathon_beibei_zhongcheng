@@ -151,16 +151,16 @@ export class Effects {
   }
 
   // 炮口火光
-  muzzleFlash(pos, dir) {
+  muzzleFlash(pos, dir, scale = 1) {
     const mesh = this._take('flash', this.geoSphere, true);
     this._spawn({
       mesh, poolKey: 'flash', pos, color: 0xffd479, dur: 0.09,
-      scale0: 0.5, scale1: 2.6, opacity: 0.95, fadePow: 1.2,
+      scale0: 0.5 * scale, scale1: 2.6 * scale, opacity: 0.95, fadePow: 1.2,
     });
     const smoke = this._take('smoke', this.geoSphere, false);
     this._spawn({
       mesh: smoke, poolKey: 'smoke', pos, color: 0xbdb6a8, dur: 0.5,
-      scale0: 0.6, scale1: 3.2, opacity: 0.32,
+      scale0: 0.6 * scale, scale1: 3.2 * scale, opacity: 0.32,
       vel: new THREE.Vector3(dir.x * 2, 0.6, dir.z * 2), grav: 0.6,
     });
     // 开炮的一瞬间照亮周围。白天几乎看不出来，夜战里这是唯一的光源

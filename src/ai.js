@@ -242,7 +242,12 @@ export class TankAI {
     this.offsetTimer -= dt;
     if (this.offsetTimer <= 0) {
       this.offsetTimer = rand(0.7, 1.9);
-      const e = CONFIG.ai.aimError + (this.moving ? CONFIG.ai.aimErrorMoving : 0);
+      // 瞄准偏差倍率：普通车是 1；BOSS 移动中误差很小、进瞄准模式零误差
+      let mul = 1;
+      if (this.tank.aimErrorMul !== undefined) {
+        mul = this.tank.precise ? (this.tank.aimErrorMulPrecise || 0) : this.tank.aimErrorMul;
+      }
+      const e = (CONFIG.ai.aimError + (this.moving ? CONFIG.ai.aimErrorMoving : 0)) * mul;
       this.aimOffsetTarget.set(gauss() * e, gauss() * e * 0.5, gauss() * e);
     }
     this.aimOffset.lerp(this.aimOffsetTarget, 1 - Math.exp(-2.2 * dt));

@@ -33,6 +33,13 @@ export class Tank {
     this.turnSpeed = CONFIG.tank.turnSpeed;
     this.draft = CONFIG.tank.waterDraft;   // 浮在水里时沉下去多少
     this.barrelBaseY = 2.97;               // 炮塔枢轴离地多高（炮管避障用）
+    // 炮弹参数：普通坦克用这套默认值，BOSS 之类的子类在构造函数里覆盖
+    this.shellDamage = CONFIG.bullet.damage;
+    this.shellSpeed = CONFIG.bullet.speed;
+    this.shellHoming = 0;                  // >0 = 轻微跟踪（见 bullet.js）
+    // 瞄准偏差倍率：普通车是 1（ai.js 里乘上去）。BOSS 会把它压小甚至归零
+    this.aimErrorMul = undefined;
+    this.aimErrorMulPrecise = undefined;   // 进瞄准模式时用的那一份
 
     this.yaw = opts.yaw ?? rand(0, Math.PI * 2);
     this.turretYaw = this.yaw;
@@ -324,13 +331,14 @@ export class Tank {
     this.world.bullets.spawn({
       pos: muzzle.clone(),
       dir,
-      speed: CONFIG.bullet.speed,
-      damage: CONFIG.bullet.damage,
+      speed: this.shellSpeed,
+      damage: this.shellDamage,
       owner: this,
       team: this.team,
       kind: 'shell',
+      homing: this.shellHoming,       // BOSS 的炮弹带一点点跟踪
     });
-    this.world.effects.muzzleFlash(muzzle, dir);
+    this.world.effects.muzzleFlash(muzzle, dir, this.isBoss ? 1.6 : 1);
     this.recoil = 1;
     return true;
   }

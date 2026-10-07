@@ -58,13 +58,14 @@ export class BulletManager {
       life: 0,
       age: 0,
       puffOnDeath: false,   // 飞到头自己炸一下（"受潮"的子弹），而不是无声消失
+      homing: 0,            // >0 = 轻微跟踪（BOSS 的炮弹）
     };
     this.bullets.push(b);
     return b;
   }
 
   // life 传正数就是"这发子弹只活这么久"（受潮的子弹飞不远，到点自己炸）
-  spawn({ pos, dir, speed = CONFIG.bullet.speed, damage, owner, team, kind = 'shell', life = 0 }) {
+  spawn({ pos, dir, speed = CONFIG.bullet.speed, damage, owner, team, kind = 'shell', life = 0, homing = 0 }) {
     let b;
     if (this.free.length) b = this.free.pop();
     else if (this.bullets.length < this.max) b = this._create();
@@ -82,6 +83,7 @@ export class BulletManager {
     b.team = team;
     b.life = life > 0 ? life : CONFIG.bullet.life;
     b.puffOnDeath = life > 0;
+    b.homing = homing || 0;
     b.age = 0;
     b.group.visible = true;
     b.group.position.copy(pos);
@@ -165,6 +167,28 @@ export class BulletManager {
       ) {
         this._impact(b, false);
         continue;
+      }
+
+      // 2.5) BOSS 的炮弹：轻微跟踪 —— 慢慢朝最近的敌对目标偏一点。
+      //      转得很慢（见 config.boss.homing），而且只在射程内跟，躲得开
+      if (b.homing > 0) {
+        let best = null;
+        let bd = CONFIG.boss.homingRange * CONFIG.boss.homingRange;
+        for (const t of tanks) {
+          if (!t.alive || t.team === b.team) continue;
+          const d = b.pos.distanceToSquared(t.pos);
+          if (d < bd) { bd = d; best = t; }
+        }
+        for (const p of planes) {
+          if (!p.alive || p.team === b.team) continue;
+          const d = b.pos.distanceToSquared(p.pos);
+          if (d < bd) { bd = d; best = p; }
+        }
+        if (best) {
+          const sp = b.vel.length();
+          _dirNorm.copy(best.pos).sub(b.pos).normalize().multiplyScalar(sp);
+          b.vel.lerp(_dirNorm, Math.min(1, b.homing * dt));
+        }
       }
 
       // 3) 飞机（判定体积很小，所以很难打中；同样打不到自己）

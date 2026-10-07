@@ -1061,6 +1061,18 @@ export class PlaneManager {
     this.respawn = !!respawn;
   }
 
+  // 额外补一架（BOSS 的"飞机随从"用）：从池子里捞一架退役的放回天上。
+  // 只动这一架 —— 不能走 configure+reset 那条路，那会把玩家正在开的飞机也一起重置
+  addOne(team) {
+    const p = this.list.find((q) => q.retired && q.team === team);
+    if (!p) return null;
+    p.retired = false;
+    p.lives = this.respawn ? CONFIG.mode.planeLives : 0;
+    p._reset();
+    this._nameAll();
+    return p;
+  }
+
   // 每局重新编号：我方空军1、敌方空军1 …，不会攒出「空军57」这种
   // （纯空战里没登场的那些不编号，名字留空）
   _nameAll() {
