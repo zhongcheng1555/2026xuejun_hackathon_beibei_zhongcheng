@@ -542,6 +542,14 @@ export class Terrain {
 
   // 站在这里每秒掉多少血（岩浆 / 火山喷发的火；别的地方恒为 0）
   hazardAt(x, z) {
+    // 火山口里那池岩浆：**掉进去就是死**（一帧烧穿）。放在最前面判，
+    // 因为它比岩浆河、比喷发的火都致命
+    const v = this.volcano;
+    if (v) {
+      const dx = x - v.x;
+      const dz = z - v.z;
+      if (dx * dx + dz * dz < v.crater * v.crater) return CONFIG.volcano.craterDamage || 9999;
+    }
     const s = this.stream;
     if (s && s.damage && this.streamDistance(x, z) < s.width * 0.8) return s.damage;
     return this.inFire(x, z) ? this.fireDamage : 0;
@@ -639,7 +647,8 @@ export class Terrain {
   startEruption() {
     if (!this.volcano || this.fireActive) return false;
     const s = this.stream;
-    this.fireDamage = (s && s.damage) || 9;      // 和岩浆一个烧法
+    // 喷发的火有自己的一档伤害（岩浆河是「路过会疼」，喷发是「该收场了」）
+    this.fireDamage = CONFIG.volcano.fireDamage || (s && s.damage) || 9;
     this.fireActive = true;
     this.fireRadius = CONFIG.volcano.lag;
     this._firePainted = 0;

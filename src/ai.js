@@ -441,6 +441,28 @@ export class TankAI {
         az = -tank.pos.z / len;
         mag = 1;
       }
+    } else if (this._intoCrater(ax, az)) {
+      // 火山口是个**一沾就死的碗**：必须在进去之前就绕开。
+      // 上面那套「hazardAt > 0 就往外跑」只对"已经在烧"管用，
+      // 火山口进了就来不及了（一帧烧穿），所以要看前面十几米
+      const v = t.volcano;
+      const cx = tank.pos.x - v.x;
+      const cz = tank.pos.z - v.z;
+      const len = Math.hypot(cx, cz) || 1;
+      let tx = -cz / len;
+      let tz = cx / len;
+      if (tx * ax + tz * az < 0) {   // 沿切线绕，选和自己朝向更合的那一侧
+        tx = -tx;
+        tz = -tz;
+      }
+      // 离得越近，往外的分量越重（贴到边上时几乎是直接往外推）
+      const w = Math.max(0, 1 - len / (v.crater + 30));
+      ax = tx + (cx / len) * w * 1.6;
+      az = tz + (cz / len) * w * 1.6;
+      const l2 = Math.hypot(ax, az) || 1;
+      ax /= l2;
+      az /= l2;
+      mag = Math.max(mag, 0.9);
     } else if (t.stream && t.stream.damage > 0 && this._crossingInto(t, ax, az)) {
       // 下水**之前**先看一眼（别等泡进去了才想办法）：
       //   · 目标不在对岸 → 没理由下水，沿着岸边走
@@ -494,6 +516,17 @@ export class TankAI {
       }
     }
     this.tank.setMoveIntent(ax, az, mag);
+  }
+
+  // 往这个方向再开 13 米，会不会撞进"火山口危险圈"（火山口 + 10 米缓冲）。
+  // 火山口一沾就死，靠"已经在烧"那套来不及 —— 得提前绕
+  _intoCrater(ax, az) {
+    const v = this.world.terrain.volcano;
+    if (!v) return false;
+    const reach = v.crater + 10;
+    const px = this.tank.pos.x + ax * 13 - v.x;
+    const pz = this.tank.pos.z + az * 13 - v.z;
+    return px * px + pz * pz < reach * reach;
   }
 
   // 沿这个方向再开 7 米，会不会进岩浆
