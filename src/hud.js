@@ -12,7 +12,7 @@ export class HUD {
       allyAir: document.getElementById('stat-ally-air'),
       kills: document.getElementById('stat-kills'),
       friendlyKills: document.getElementById('stat-friendly'),
-      planes: document.getElementById('stat-planes'),
+
       feed: document.getElementById('feed'),
       banner: document.getElementById('banner'),
       bannerTitle: document.getElementById('banner-title'),
@@ -291,10 +291,10 @@ export class HUD {
     const draw = win === null || win === undefined;
     this.el.overTitle.textContent = draw ? '平局' : win ? '战斗胜利' : '战斗失败';
     this.el.overTitle.className = draw ? 'draw' : win ? 'win' : 'lose';
+    // 车和飞机合成一条：都是"干掉的敌人"。拆成两条是把同一件事说两遍
     this.el.overStats.innerHTML = `
-      <li><span>你击毁的敌军</span><b>${stats.kills}</b></li>
+      <li><span>你击毁的敌人（车 + 机）</span><b>${stats.kills + stats.planesDown}</b></li>
       <li><span>误伤友军</span><b class="warn">${stats.friendlyKills}</b></li>
-      <li><span>击落飞机</span><b>${stats.planesDown}</b></li>
       <li><span>我方阵亡</span><b>${stats.allyLost}</b></li>
       <li><span>敌方损失</span><b>${stats.enemyLost}</b></li>
       <li><span>你的阵亡次数</span><b>${stats.playerDeaths}</b></li>
@@ -307,14 +307,15 @@ export class HUD {
     // 数量也一样不该白送。原来还留了两格写「?」，等于占着地方说废话，干脆整块删掉
     this.el.ally.textContent = state.allyAlive;
     this.el.allyAir.textContent = state.allyAir;
-    // 你的击毁：顺带标出"我方一共打掉多少"。队友干的活本来完全不露脸，
+    // 击毁：**车和飞机算一件事**。敌人就是敌人，打掉一辆车和打下一架飞机都是"干掉一个"，
+    // 拆成「击毁的敌军」+「击落飞机」两格等于把同一件事说两遍（玩家反馈）
+    const mine = state.kills + (state.planesDown || 0);
+    // 顺带标出"我方一共打掉多少"。队友干的活本来完全不露脸，
     // 玩家很容易觉得"全是我一个人打的"（实测队友包了大头）——
     // 把队伍的战果摆出来，这一局才像一场联合作战
-    const mine = state.kills;
     const team = mine + (state.allyKills || 0);
     this.el.kills.textContent = team > mine ? `${mine}（我方共 ${team}）` : `${mine}`;
     this.el.friendlyKills.textContent = state.friendlyKills;
-    this.el.planes.textContent = state.planesDown;
   }
 
   // 顶上那排兵力标签：本局有什么就写什么（船 / 坦克 / 飞机）。
