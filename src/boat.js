@@ -165,15 +165,8 @@ export class Boat extends Tank {
 
   // 这个方向上船能跑到的最外侧 = 水线 × keepIn（留余量，别把船头搁在滩上）
   _shoreLimit(L, th) {
-    const ring = L.waterRing;
-    if (!ring || !ring.length) return CONFIG.boat.keepIn;
-    const N = ring.length;
-    let a = (th / (Math.PI * 2)) * N;
-    a = ((a % N) + N) % N;
-    const i0 = Math.floor(a) % N;
-    const i1 = (i0 + 1) % N;
-    const f = a - i0;
-    const k = ring[i0] * (1 - f) + ring[i1] * f;
+    const t = this.world.terrain;
+    const k = t.ringAt ? t.ringAt(L, th) : 0.85;
     return k * CONFIG.boat.keepIn;
   }
 
@@ -187,21 +180,11 @@ export function waterSpawns(terrain, team, count) {
   if (!terrain.lakes || !terrain.lakes.length) return out;
   const L = terrain.lakes[0];
   const dir = team === TEAM.ALLY ? -1 : 1;    // 我方在西、敌方在东
-  const ring = L.waterRing;
-  const N = ring && ring.length ? ring.length : 1;
   // 出生点离岸多远：海图比湖图大得多，用同一个比例会让两军隔 400 多米，所以图可以自己调
   const frac = terrain.biome && terrain.biome.boatSpawnFrac !== undefined
     ? terrain.biome.boatSpawnFrac
     : CONFIG.boat.spawnFrac;
-  const ringAt = (th) => {
-    if (!ring || !ring.length) return 0.8;
-    let a = (th / (Math.PI * 2)) * N;
-    a = ((a % N) + N) % N;
-    const i0 = Math.floor(a) % N;
-    const i1 = (i0 + 1) % N;
-    const f = a - i0;
-    return ring[i0] * (1 - f) + ring[i1] * f;
-  };
+  const ringAt = (th) => (terrain.ringAt ? terrain.ringAt(L, th) : 0.8);
   const put = (ux, uz) => {
     const len = Math.hypot(ux, uz) || 1;
     const nx = (dir * ux) / len;

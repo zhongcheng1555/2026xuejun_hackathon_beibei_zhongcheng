@@ -585,7 +585,7 @@ export const BIOMES = [
   },
   {
     id: 'garden',
-    name: '花园迷宫',
+    name: '花园',
     size: 460,
     heightScale: 4,        // 花园地面很平整
     noiseScale: 0.007,
@@ -617,7 +617,7 @@ export const BIOMES = [
     heightScale: 7,        // 谷底比较平，起伏主要靠岩壁
     noiseScale: 0.004,
     ridge: 1.4,
-    // 山谷 = "路上有墙"的地图，和花园迷宫共用同一套骨架（terrain.js 的 _buildMaze），
+    // 山谷 = "路上有墙"的地图，和花园共用同一套骨架（terrain.js 的 _buildMaze），
     // 区别只在三处：① 墙换成 24m 高的岩壁（坦克绝对爬不上去）
     //              ② 地图放大到沙漠那么大、走廊收窄
     //              ③ 墙打得更稀疏（mazeOpen 高）+ 若干节点直接开成空地（mazePlazas），
@@ -675,6 +675,7 @@ export const BIOMES = [
       // 水盆要够深：太浅的话连湖心看着都像一片浅水（玩家反馈）
       rx: 0.24, rz: 0.21, depth: 22,
       color: 0x24618f, speedMul: 0.38,
+      waveAmp: 0.45,      // 浪高：湖面比海面稳
     },
   },
   {
@@ -704,6 +705,7 @@ export const BIOMES = [
       chance: 1, count: 1, spots: [[0, 0]],
       rx: 0.46, rz: 0.46, depth: 30,
       color: 0x1f5f8c, speedMul: 0.36,
+      waveAmp: 1.2,       // 浪高：海面有真正的涌浪（低模，两条正弦叠一下）
     },
   },
 ];

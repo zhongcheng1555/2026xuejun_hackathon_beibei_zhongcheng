@@ -158,13 +158,18 @@ export class Terrain {
       }
     }
 
+    // 水位和岸线要在建地面**之前**算好：地面顶点染色要用"真实水线"（不然会把滩也染成水色）。
+    // 这时候高度网格还没建，所以这两步走 rawHeight（差的就是网格插值那十几厘米，
+    // 而它俩算的本来就是"渲染出来的那块地"，用 rawHeight 反而更贴）
+    this._buildLakeLevel();   // 同一张图的所有湖共用一个水位
+    this._buildWadeRing();    // "浅滩能趟到哪儿" + 真实水线（waterRing）
+
     this._buildGround();
     this._buildCrater();      // 火山口里那池岩浆（只有火山图有）
     this._buildStreamSurface();
-    this._buildLakeSurface(); // 大湖的水面（只有带 lake 配置的图有）
-    this._buildWadeRing();    // "浅滩能趟到哪儿"的岸线（同上，必须在水位定好之后）
-    this._buildWaterPlants(); // 水里的荷叶/芦苇/海草（同上）
-    // 城市废墟走"街区"布局，花园迷宫走"挖通道"布局，其他地形是随机撒掩体
+    this._buildLakeSurface(); // 水面（按上面那条真实水线画）
+    this._buildWaterPlants(); // 水里的荷叶/芦苇/海草
+    // 城市废墟走"街区"布局，花园走"挖通道"布局，其他地形是随机撒掩体
     if (biome.maze) this._buildMaze();
     else if (biome.city) this._buildCity();
     else this._scatterObstacles();
@@ -243,29 +248,126 @@ export class Terrain {
     }
   }
 
-  // 大湖的水面：一片贴着水位高度的椭圆面。
-  // 湖盆是挖出来的（见 rawHeight），所以水面盖住盆底、露出岸线。
-  // 得等 _buildGround 把高度场填好才能定水位，所以放在它后面调。
+  // 水位：**同一张图上所有湖共用同一个水位**。
+  // 原来是每片湖各算各的（heightAt(湖心) + 大半个深度）—— 两片湖挨着的时候
+  // 那个差几米的高差会露馅：水面看着"一头平一头斜"，船从 A 湖开进 B 湖还会
+  // 沉到 B 湖的水面以下（玩家反馈的"船变成潜水艇"）
+  _buildLakeLevel() {
+    if (!this.lakes.length) return;
+    let floorSum = 0;
+    let depthSum = 0;
+    for (const L of this.lakes) {
+      floorSum += this.rawHeight(L.x, L.z);
+      depthSum += L.depth;
+    }
+    const level = floorSum / this.lakes.length + (depthSum / this.lakes.length) * 0.78;
+    for (const L of this.lakes) L.level = level;
+  }
+
+  // 按方向读一条环（水线 / 浅滩线），返回插值后的归一化距离
+  ringAt(L, th) {
+    const ring = L.waterRing;
+    if (!ring || !ring.length) return 0.85;
+    const N = ring.length;
+    let a = (th / (Math.PI * 2)) * N;
+    a = ((a % N) + N) % N;
+    const i0 = Math.floor(a) % N;
+    const i1 = (i0 + 1) % N;
+    const f = a - i0;
+    return ring[i0] * (1 - f) + ring[i1] * f;
+  }
+
+  // 大湖的水面。
+  // 形状**跟着真实水线走**（waterRing），不再是一整块椭圆 ——
+  // 椭圆靠外那一圈其实是滩：水面铺过去会盖在干地上，看着"又绿又蓝"
   _buildLakeSurface() {
     if (!this.lakes.length) return;
-    for (const L of this.lakes) {
-      // 水位 = 湖心（已挖过的）盆底 + 大半个深度 —— 比湖沿低一点，岸线露在外面
-      L.level = this.heightAt(L.x, L.z) + L.depth * 0.78;
-      const geo = new THREE.CircleGeometry(1, 64);
-      geo.rotateX(-Math.PI / 2);
-      geo.scale(L.rx, 1, L.rz);
-      geo.translate(L.x, L.level, L.z);
+    this.waterMeshes = [];
+    const RINGS = [0.34, 0.67, 1.0];   // 三层：中心一圈、中间一圈、岸线一圈
+    for (let li = 0; li < this.lakes.length; li++) {
+      const L = this.lakes[li];
+      const N = (L.waterRing && L.waterRing.length) || 32;
+      const verts = [];
+      const base = [];                  // 每个顶点的 {x, z, r}：算波浪用
+      const push = (x, z, r) => {
+        verts.push(x, L.level, z);
+        base.push(x, z, r);
+        return verts.length / 3 - 1;
+      };
+      const idx = [];
+      const c0 = push(L.x, L.z, 0);
+      const rings = [];
+      for (const f of RINGS) {
+        const ring = [];
+        for (let i = 0; i < N; i++) {
+          const th = (i / N) * Math.PI * 2;
+          const k = L.waterRing ? L.waterRing[i] : 0.9;
+          const x = L.x + Math.cos(th) * L.rx * k * f;
+          const z = L.z + Math.sin(th) * L.rz * k * f;
+          ring.push(push(x, z, k * f));
+        }
+        rings.push(ring);
+      }
+      for (let i = 0; i < N; i++) {
+        idx.push(c0, rings[0][i], rings[0][(i + 1) % N]);
+      }
+      for (let r = 0; r < rings.length - 1; r++) {
+        for (let i = 0; i < N; i++) {
+          const a = rings[r][i];
+          const b = rings[r][(i + 1) % N];
+          const c = rings[r + 1][i];
+          const d = rings[r + 1][(i + 1) % N];
+          idx.push(a, c, b, b, c, d);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const amp = (this.biome.lake && this.biome.lake.waveAmp) || 0;
       const mat = new THREE.MeshStandardMaterial({
         color: L.color,
-        roughness: 0.12,     // 又滑又亮 —— 一眼就认得出是水
-        metalness: 0.15,
+        roughness: 0.16,     // 又滑又亮 —— 一眼就认得出是水
+        metalness: 0.18,
         transparent: true,
-        opacity: 0.78,       // 留一点透，能看见水下的海草
+        opacity: 0.9,        // 留一点透看得到水下的海草，但不能太"清澈见底"（玩家嫌太透）
+        side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'lake';
       mesh.renderOrder = 1;
+      // 多片湖各自画一块，重叠处会 z-fighting：错开一丝高度，视觉上看不出来
+      mesh.position.y = li * 0.03;
       this.group.add(mesh);
+      this.waterMeshes.push({ geo, base, amp, level: L.level });
+    }
+  }
+
+  // 水面的波高（低模：两条正弦叠一下就够了）。
+  // 玩家能站上去的东西（船）和水面用的是同一个函数，所以船会跟着浪一起起伏，
+  // 不会出现"水面在动、船钉在固定海拔"的割裂感
+  waveAt(x, z) {
+    if (!this.waterMeshes || !this.waterMeshes.length) return 0;
+    const a = this.waterMeshes[0].amp;
+    if (!a) return 0;
+    const t = this.waterT || 0;
+    return a * Math.sin(x * 0.07 + t * 1.1) + a * 0.55 * Math.sin(z * 0.11 - t * 0.8);
+  }
+
+  // 每帧推进水面（浪的时间 + 顶点）。main 的循环里调（走 terrain.update）
+  updateWater(dt) {
+    if (!this.waterMeshes || !this.waterMeshes.length) return;
+    this.waterT = (this.waterT || 0) + dt;
+    if (!this.waterMeshes.some((wm) => wm.amp)) return;
+    for (const wm of this.waterMeshes) {
+      if (!wm.amp) continue;
+      const pos = wm.geo.attributes.position;
+      const arr = pos.array;
+      for (let i = 0, j = 0; i < wm.base.length; i += 3, j += 3) {
+        arr[j + 1] = wm.level + this.waveAt(wm.base[i], wm.base[i + 1]);
+      }
+      pos.needsUpdate = true;
+      wm.geo.computeVertexNormals();
     }
   }
 
@@ -292,7 +394,7 @@ export class Terrain {
         let seenWater = false;
         for (let s = 1; s <= 90; s++) {
           const kk = 1.02 - s * 0.012;       // 从岸边一直扫到接近湖心
-          const h = this.heightAt(L.x + cx * L.rx * kk, L.z + cz * L.rz * kk);
+          const h = this.rawHeight(L.x + cx * L.rx * kk, L.z + cz * L.rz * kk);
           const d = L.level - h;
           if (!seenWater && d > 0.15) { seenWater = true; kWater = kk; }
           if (d > wade) break;               // 比这深了：就停在上一步
@@ -398,6 +500,7 @@ export class Terrain {
 
   // 每帧：让岩浆微微呼吸（热量感），并把光源挂到玩家附近
   update(dt, focus) {
+    this.updateWater(dt);   // 水面波浪（没有水图的局这个函数直接返回）
     const s = this.stream;
     // 夜里的岩浆要比白天更亮（它是光源）。这个倍率由 main.js 每局设一次
     const lit = this.night ? (CONFIG.night.lavaLightMul || 1) : 1;
@@ -596,10 +699,11 @@ export class Terrain {
     return this.lakes.length > 0 && this.lakeK(x, z) < 1;
   }
 
-  // 湖面高度（不在湖里返回 null）—— 坦克用它决定"浮多高"，而不是沉到盆底
+  // 湖面高度（不在湖里返回 null）—— 坦克用它决定"浮多高"，而不是沉到盆底。
+  // 带上浪：船和水面用的是同一个波高函数，所以船会跟着浪起伏
   waterLevelAt(x, z) {
     for (const L of this.lakes) {
-      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) return L.level;
+      if (Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz) < 1) return L.level + this.waveAt(x, z);
     }
     return null;
   }
@@ -786,12 +890,18 @@ export class Terrain {
         }
       }
 
-      // 大湖：湖底也染成水的颜色（水面网格盖在上面，湖底只是从岸边浅水透出来）
+      // 大湖：**只把水线以内**染成水色。
+      // 原来按椭圆算（k<1.06 就开始染）—— 而椭圆靠外那一圈其实是滩，
+      // 于是岸上明明是干地却被染成又绿又蓝（玩家反馈）
       if (this.lakes.length) {
         for (const L of this.lakes) {
           const k = Math.hypot((x - L.x) / L.rx, (z - L.z) / L.rz);
           if (k >= 1.1) continue;
-          const t = clamp((1.06 - k) / 0.5, 0, 1);
+          const wl = this.ringAt(L, Math.atan2(z - L.z, x - L.x));
+          if (k >= wl) continue;                 // 水线以外：干地，不染
+          // 湿岸带宽按**米**算（约 25 米），不按 k —— 海图的椭圆半径是湖图的两倍，
+          // 按 k 算会变成 50 多米宽的一圈，看着像一片淤泥滩
+          const t = clamp(((wl - k) * Math.min(L.rx, L.rz)) / 25, 0, 1);
           c.lerp(wetBank, clamp(t * 1.4, 0, 1) * 0.5);
           c.lerp(water, clamp((t - 0.3) / 0.7, 0, 1) * 0.9);
         }
@@ -1183,7 +1293,7 @@ export class Terrain {
     }
   }
 
-  // ---------- 花园迷宫 ----------
+  // ---------- 花园 ----------
   //
   // 大块绿色植物围成格子，通道在格子之间 —— 真的很像迷宫。
   // 生成用"挖通道法"（随机深度优先），从任意一格出发都能走到其他所有格，
@@ -1245,7 +1355,7 @@ export class Terrain {
     // **墙角上那两堵墙**也拿掉 —— 所以这里有两种挖法：
     //   · 节点空地（mazePlazas）：拿掉这一格自己的四面墙 → 一个十字路口
     //   · 转角打通（mazeCorners）：拿掉墙角相交的那几堵墙 → 斜向穿过去
-    // 花园迷宫两个都没写，所以完全不受影响。
+    // 花园两个都没写，所以完全不受影响。
     const carve = [];   // { x, z, r }
     const plazaRate = this.biome.mazePlazas || 0;
     if (plazaRate > 0) {
